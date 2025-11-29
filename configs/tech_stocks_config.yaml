@@ -1,0 +1,54 @@
+# Configuration for tech stock portfolio
+
+# Data configuration
+data:
+  tickers:
+    - AAPL
+    - MSFT
+    - GOOGL
+    - AMZN
+    - NVDA
+    - META
+    - TSLA
+    - NFLX
+  train_days: 1460       # 4 years
+  val_days: 365          # 1 year
+  source: yfinance
+
+# Environment configuration
+environment:
+  initial_balance: 50000.0
+  transaction_cost: 0.0015  # Slightly higher for more volatile stocks
+  window_size: 20
+  reward_function: risk_adjusted
+  reward_params:
+    risk_aversion: 0.5
+    window: 30
+
+# Agent configuration
+agent:
+  algorithm: PPO
+  policy: MlpPolicy
+  learning_rate: 0.0001
+  n_steps: 2048
+  batch_size: 128
+  n_epochs: 15
+  gamma: 0.99
+  gae_lambda: 0.95
+  clip_range: 0.2
+  ent_coef: 0.005
+  vf_coef: 0.5
+  max_grad_norm: 0.5
+  policy_kwargs:
+    net_arch:
+      - 512
+      - 512
+      - 256
+
+# Training configuration
+training:
+  total_timesteps: 150000
+  eval_freq: 5000
+  save_freq: 10000
+  log_dir: logs/tech_stocks
+  model_dir: agents/models/tech_stocks

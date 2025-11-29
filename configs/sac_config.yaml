@@ -1,0 +1,51 @@
+# Configuration for SAC (Soft Actor-Critic) agent
+
+# Data configuration
+data:
+  tickers:
+    - SPY    # S&P 500
+    - QQQ    # Nasdaq
+    - IWM    # Russell 2000
+    - TLT    # Long-term Treasury
+    - GLD    # Gold
+    - VNQ    # Real Estate
+  train_days: 1095       # 3 years
+  val_days: 365          # 1 year
+  source: yfinance
+
+# Environment configuration
+environment:
+  initial_balance: 10000.0
+  transaction_cost: 0.001
+  window_size: 30
+  reward_function: sortino
+  reward_params:
+    window: 40
+    risk_free_rate: 0.02
+
+# Agent configuration (SAC-specific)
+agent:
+  algorithm: SAC
+  policy: MlpPolicy
+  learning_rate: 0.0003
+  buffer_size: 100000
+  learning_starts: 100
+  batch_size: 256
+  tau: 0.005
+  gamma: 0.99
+  train_freq: 1
+  gradient_steps: 1
+  ent_coef: auto
+  target_update_interval: 1
+  policy_kwargs:
+    net_arch:
+      - 256
+      - 256
+
+# Training configuration
+training:
+  total_timesteps: 200000
+  eval_freq: 10000
+  save_freq: 20000
+  log_dir: logs/sac
+  model_dir: agents/models/sac

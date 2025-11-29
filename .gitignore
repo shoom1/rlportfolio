@@ -1,0 +1,80 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environment
+venv/
+env/
+ENV/
+.venv
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# Data and Models
+data/cache/*.pkl
+agents/models/*.zip
+agents/models/**/*.zip
+*.h5
+*.pkl
+
+# Logs
+logs/
+*.log
+
+# Environment variables
+.env
+
+# Tensorboard
+events.out.tfevents.*
+
+# Results
+results/
+*.png
+*.pdf
+
+# MacOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Coverage
+.coverage
+htmlcov/
+.pytest_cache/
+
+# Internal md files
+CLAUDE.md
+docs_md/
+
+# Experiment tracking
+experiments/portfolio/*.db
+experiments/portfolio/*.db-journal
+wandb/
