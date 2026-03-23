@@ -32,6 +32,10 @@ class RewardFunction(ABC):
         """
         pass
 
+    def reset(self):
+        """Reset any internal state. Override in stateful subclasses."""
+        pass
+
 
 class SimpleReturnReward(RewardFunction):
     """Simple return-based reward."""
