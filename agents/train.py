@@ -15,9 +15,6 @@ from stable_baselines3.common.callbacks import CheckpointCallback, EvalCallback
 from stable_baselines3.common.vec_env import DummyVecEnv
 from stable_baselines3.common.monitor import Monitor
 
-import sys
-sys.path.append('..')
-
 from data.fetcher import DataFetcher
 from data.features import FeatureEngineer
 from environment.portfolio_env import PortfolioEnv
@@ -38,6 +35,31 @@ from typing import Optional
 
 class PortfolioTrainer:
     """Trainer for portfolio optimization agents."""
+
+    ALGORITHM_REGISTRY = {
+        'PPO': PPO,
+        'SAC': SAC,
+        'A2C': A2C,
+    }
+
+    def _get_algorithm_class(self, algorithm: str):
+        """Get algorithm class by name.
+
+        Args:
+            algorithm: Algorithm name (e.g., 'PPO', 'SAC', 'A2C')
+
+        Returns:
+            Algorithm class from stable-baselines3
+
+        Raises:
+            ValueError: If algorithm name is not recognized
+        """
+        if algorithm not in self.ALGORITHM_REGISTRY:
+            raise ValueError(
+                f"Unknown algorithm: '{algorithm}'. "
+                f"Available: {list(self.ALGORITHM_REGISTRY.keys())}"
+            )
+        return self.ALGORITHM_REGISTRY[algorithm]
 
     def __init__(
         self,
@@ -199,11 +221,7 @@ class PortfolioTrainer:
         algorithm = self.config['agent']['algorithm']
         print(f"Creating {algorithm} agent...")
 
-        agent_class = {
-            'PPO': PPO,
-            'SAC': SAC,
-            'A2C': A2C
-        }[algorithm]
+        agent_class = self._get_algorithm_class(algorithm)
 
         # Prepare agent kwargs
         agent_kwargs = {
@@ -318,11 +336,7 @@ class PortfolioTrainer:
 
         # Load model
         algorithm = self.config['agent']['algorithm']
-        agent_class = {
-            'PPO': PPO,
-            'SAC': SAC,
-            'A2C': A2C
-        }[algorithm]
+        agent_class = self._get_algorithm_class(algorithm)
 
         print(f"Loading model from: {model_path}")
         agent = agent_class.load(model_path)

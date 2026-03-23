@@ -33,6 +33,11 @@ class TestSimpleReturnReward:
         )
         assert reward == -0.03
 
+    def test_reset_is_noop(self):
+        """Test that stateless reward function has a callable reset()."""
+        reward_fn = SimpleReturnReward()
+        reward_fn.reset()  # Should not raise
+
 
 class TestLogReturnReward:
     """Tests for LogReturnReward."""
@@ -57,6 +62,11 @@ class TestLogReturnReward:
             previous_value=0
         )
         assert reward == 0.0
+
+    def test_reset_is_noop(self):
+        """Test that stateless reward function has a callable reset()."""
+        reward_fn = LogReturnReward()
+        reward_fn.reset()  # Should not raise
 
 
 class TestSharpeReward:

@@ -156,6 +156,11 @@ class PortfolioExperiment:
 class PortfolioExperimentTracker:
     """Tracks portfolio-specific experiment data using SQLite."""
 
+    VALID_METRIC_COLUMNS = {
+        'final_value', 'total_return', 'sharpe_ratio',
+        'max_drawdown', 'total_timesteps',
+    }
+
     def __init__(self, storage_dir: str = "experiments/portfolio"):
         """
         Initialize tracker.
@@ -385,6 +390,11 @@ class PortfolioExperimentTracker:
 
     def get_best_experiments(self, metric: str = 'sharpe_ratio', top_n: int = 10) -> pd.DataFrame:
         """Get top experiments by metric."""
+        if metric not in self.VALID_METRIC_COLUMNS:
+            raise ValueError(
+                f"Invalid metric: '{metric}'. "
+                f"Valid metrics: {sorted(self.VALID_METRIC_COLUMNS)}"
+            )
         conn = sqlite3.connect(self.db_path)
 
         query = f"""

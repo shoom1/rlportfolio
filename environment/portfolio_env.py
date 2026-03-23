@@ -153,9 +153,8 @@ class PortfolioEnv(gym.Env):
             'cash': self.cash
         }]
 
-        # Reset reward function if it has state
-        if hasattr(self.reward_function, 'reset'):
-            self.reward_function.reset()
+        # Reset reward function state
+        self.reward_function.reset()
 
         observation = self._get_observation()
         info = self._get_info()
