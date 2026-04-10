@@ -40,8 +40,8 @@ ENV/
 
 # Data and Models
 data/cache/*.pkl
-agents/models/*.zip
-agents/models/**/*.zip
+training/models/*.zip
+training/models/**/*.zip
 *.h5
 *.pkl
 
@@ -72,7 +72,7 @@ htmlcov/
 
 # Internal md files
 CLAUDE.md
-docs_md/
+docs/
 
 # Experiment tracking
 experiments/portfolio/*.db

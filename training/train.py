@@ -130,7 +130,7 @@ class PortfolioTrainer:
                 'eval_freq': 5000,
                 'save_freq': 10000,
                 'log_dir': 'logs',
-                'model_dir': 'agents/models'
+                'model_dir': 'training/models'
             }
         }
 

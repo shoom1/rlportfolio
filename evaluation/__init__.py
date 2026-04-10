@@ -40,6 +40,12 @@ from .visualization import (
     plot_monthly_returns_heatmap,
     plot_underwater
 )
+from .visualize_network import (
+    print_network_structure,
+    print_layer_dimensions,
+    create_ascii_diagram,
+    analyze_network_from_config
+)
 
 __all__ = [
     # Metrics - Composition pattern
@@ -75,5 +81,10 @@ __all__ = [
     'plot_risk_return_scatter',
     'plot_rolling_metrics',
     'plot_monthly_returns_heatmap',
-    'plot_underwater'
+    'plot_underwater',
+    # Network visualization
+    'print_network_structure',
+    'print_layer_dimensions',
+    'create_ascii_diagram',
+    'analyze_network_from_config'
 ]

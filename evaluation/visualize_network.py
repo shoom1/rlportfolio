@@ -320,9 +320,9 @@ def main():
     else:
         print("Please provide either --model or --config")
         print("\nExamples:")
-        print("  python utils/visualize_network.py --model agents/models/best/best_model.zip")
-        print("  python utils/visualize_network.py --config configs/ppo_config.yaml")
-        print("  python utils/visualize_network.py --model model.zip --graph")
+        print("  python evaluation/visualize_network.py --model training/models/best/best_model.zip")
+        print("  python evaluation/visualize_network.py --config configs/ppo_config.yaml")
+        print("  python evaluation/visualize_network.py --model model.zip --graph")
 
 
 if __name__ == '__main__':

@@ -4,7 +4,7 @@ Weights & Biases experiment tracking strategy.
 
 from typing import Dict, Any, Optional
 import pandas as pd
-from .experiment_tracker import ExperimentTracker
+from .base import ExperimentTracker
 
 try:
     import wandb

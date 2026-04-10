@@ -3,7 +3,7 @@ Unit tests for experiments/tracker.py - PortfolioExperimentTracker.
 """
 
 import pytest
-from experiments.tracker import PortfolioExperimentTracker
+from experiments.portfolio_tracker import PortfolioExperimentTracker
 
 
 class TestGetBestExperiments:
@@ -44,7 +44,7 @@ class TestGetBestExperiments:
 
     def test_respects_top_n(self, tmp_path):
         """Test that top_n limits the number of results."""
-        from experiments.tracker import PortfolioExperiment
+        from experiments.portfolio_tracker import PortfolioExperiment
 
         tracker = self._create_tracker(tmp_path)
 
