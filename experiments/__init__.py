@@ -4,7 +4,7 @@ Experiment tracking and management for portfolio optimization.
 Uses the Strategy pattern for pluggable experiment tracking backends.
 """
 
-from .experiment_tracker import (
+from .base import (
     ExperimentTracker,
     MockTracker,
     VerboseMockTracker

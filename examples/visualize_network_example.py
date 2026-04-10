@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from utils.visualize_network import (
+from evaluation.visualize_network import (
     print_network_structure,
     print_layer_dimensions,
     create_ascii_diagram,
@@ -36,12 +36,12 @@ def example_2_analyze_trained_model():
     print("="*80)
 
     # You need to train a model first
-    model_path = '../agents/models/best/best_model.zip'
+    model_path = '../training/models/best/best_model.zip'
 
     print(f"\nLooking for model at: {model_path}")
     print("\nTo use this example:")
     print("1. Train a model first:")
-    print("   python agents/train.py --config configs/ppo_config.yaml")
+    print("   python training/train.py --config configs/ppo_config.yaml")
     print("2. Then run this script again")
 
     try:
@@ -210,13 +210,13 @@ def main():
 To visualize from command line:
 
 # Analyze a config file
-python utils/visualize_network.py --config configs/ppo_config.yaml
+python evaluation/visualize_network.py --config configs/ppo_config.yaml
 
 # Analyze a trained model
-python utils/visualize_network.py --model agents/models/best/best_model.zip
+python evaluation/visualize_network.py --model training/models/best/best_model.zip
 
 # Generate graphical visualization (requires: pip install torchviz graphviz)
-python utils/visualize_network.py --model agents/models/best/best_model.zip --graph
+python evaluation/visualize_network.py --model training/models/best/best_model.zip --graph
 
 # The graph will be saved as network_graph.png
     """)
@@ -227,7 +227,7 @@ python utils/visualize_network.py --model agents/models/best/best_model.zip --gr
     print("""
 In your Python code:
 
-    from utils.visualize_network import (
+    from evaluation.visualize_network import (
         print_network_structure,
         create_ascii_diagram,
         analyze_network_from_config
@@ -237,10 +237,10 @@ In your Python code:
     analyze_network_from_config('configs/ppo_config.yaml')
 
     # Analyze trained model
-    print_network_structure('agents/models/best/best_model.zip')
+    print_network_structure('training/models/best/best_model.zip')
 
     # Create ASCII diagram
-    create_ascii_diagram('agents/models/best/best_model.zip')
+    create_ascii_diagram('training/models/best/best_model.zip')
     """)
 
     print("\n" + "="*80)

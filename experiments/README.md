@@ -40,7 +40,7 @@ conda run -n rlportfolio pip install -r requirements.txt
 ### 2. Basic Usage
 
 ```python
-from agents.train_with_tracking import create_trainer_with_tracking
+from training.train_with_tracking import create_trainer_with_tracking
 
 # Create trainer with tracking
 trainer = create_trainer_with_tracking(
@@ -307,7 +307,7 @@ Access at: https://wandb.ai/your-username/rl-portfolio
 
 ```bash
 # 1. Train with experiment tracking
-python agents/train_with_tracking.py --config configs/ppo_config.yaml
+python training/train_with_tracking.py --config configs/ppo_config.yaml
 
 # 2. List recent experiments
 python -m experiments.cli list --limit 10

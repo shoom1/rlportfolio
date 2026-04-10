@@ -48,4 +48,4 @@ training:
   eval_freq: 10000
   save_freq: 20000
   log_dir: logs/sac
-  model_dir: agents/models/sac
+  model_dir: training/models/sac

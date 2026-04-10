@@ -54,19 +54,19 @@ pip install -r requirements.txt
 
 ```bash
 # Train with default configuration (PPO on 5 tech stocks)
-python agents/train.py
+python training/train.py
 
 # Train with custom configuration
-python agents/train.py --config configs/sac_config.yaml
+python training/train.py --config configs/sac_config.yaml
 
 # Resume from checkpoint
-python agents/train.py --resume agents/models/portfolio_agent_50000_steps.zip
+python training/train.py --resume training/models/portfolio_agent_50000_steps.zip
 ```
 
 ### 2. Evaluate a Trained Model
 
 ```bash
-python agents/train.py --eval agents/models/best/best_model.zip
+python training/train.py --eval training/models/best/best_model.zip
 ```
 
 ### 3. Run Backtests and Compare Strategies
@@ -96,7 +96,7 @@ env = PortfolioEnv(
 )
 
 # Load trained agent
-agent = PPO.load('agents/models/best/best_model.zip')
+agent = PPO.load('training/models/best/best_model.zip')
 
 # Run backtests
 backtester = Backtester()
@@ -122,20 +122,22 @@ rlportfolio/
 │   └── features.py        # Technical indicators with registry pattern
 ├── environment/           # Custom Gym environment
 │   ├── portfolio_env.py   # Multi-asset portfolio environment
-│   └── rewards.py         # Reward function implementations
-├── agents/                # Training and model storage
+│   ├── rewards.py         # Reward function implementations
+│   └── transaction_costs.py # Pluggable cost/slippage models
+├── training/              # Training infrastructure
 │   ├── train.py           # Training script with config support
 │   └── models/            # Saved models and checkpoints
 ├── evaluation/            # Backtesting and analysis
 │   ├── metrics.py         # Performance metrics (Sharpe, Sortino, etc.)
 │   ├── backtest.py        # Stateful backtester
 │   ├── baselines.py       # Baseline strategy implementations
-│   └── visualization.py   # Plotting functions
+│   ├── visualization.py   # Plotting functions
+│   └── visualize_network.py # NN architecture visualization
+├── experiments/           # Experiment tracking (W&B, MLflow, SQLite)
 ├── configs/               # YAML configuration files
 │   ├── default_config.yaml
 │   ├── sac_config.yaml
 │   └── tech_stocks_config.yaml
-├── notebooks/             # Jupyter notebooks for analysis
 └── tests/                 # Unit tests
 ```
 

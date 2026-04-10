@@ -5,7 +5,7 @@ Callback class for integrating experiment trackers into Stable-Baselines3 traini
 from typing import Optional
 import numpy as np
 from stable_baselines3.common.callbacks import BaseCallback
-from .experiment_tracker import ExperimentTracker
+from .base import ExperimentTracker
 
 
 class ExperimentTrackingCallback(BaseCallback):

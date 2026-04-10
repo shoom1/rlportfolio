@@ -278,7 +278,7 @@ def main():
     print("\nNext steps:")
     print("1. Try the CLI: python -m experiments.cli list")
     print("2. Run actual training with tracking:")
-    print("   python agents/train_with_tracking.py --config configs/ppo_config.yaml")
+    print("   python training/train_with_tracking.py --config configs/ppo_config.yaml")
     print("3. Set up W&B: wandb login")
     print("4. Read experiments/README.md for full documentation")
     print("="*80 + "\n")
