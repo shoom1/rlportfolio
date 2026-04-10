@@ -1,187 +1,120 @@
 """
-Unit tests for data/fetcher.py
+Unit tests for data/fetcher.py - DataFetcher using findata.DataClient.
 """
 
 import pytest
 import pandas as pd
 import numpy as np
-from pathlib import Path
-import tempfile
-import shutil
 from unittest.mock import patch, MagicMock
 from data.fetcher import DataFetcher
+
+
+def _make_mock_wide_data(tickers, n_days=10):
+    """Create mock wide-format data matching findata output."""
+    dates = pd.date_range('2023-01-01', periods=n_days, freq='D')
+    rows = []
+    for date in dates:
+        for symbol in tickers:
+            rows.append((date, symbol))
+    index = pd.MultiIndex.from_tuples(rows, names=['date', 'symbol'])
+    n = len(rows)
+    return pd.DataFrame({
+        'open': np.random.rand(n) * 100,
+        'high': np.random.rand(n) * 100,
+        'low': np.random.rand(n) * 100,
+        'close': np.random.rand(n) * 100,
+        'volume': np.random.randint(1_000_000, 10_000_000, n).astype(float),
+    }, index=index)
 
 
 class TestDataFetcher:
     """Tests for DataFetcher class."""
 
-    @pytest.fixture
-    def temp_cache_dir(self):
-        """Create a temporary cache directory."""
-        temp_dir = tempfile.mkdtemp()
-        yield temp_dir
-        shutil.rmtree(temp_dir)
+    @patch('data.fetcher.DataClient')
+    def test_fetch_data_returns_multiindex(self, MockClient):
+        """Test that fetch_data returns (date, ticker) MultiIndex."""
+        mock_client = MockClient.return_value
+        mock_client.get_data.return_value = _make_mock_wide_data(['AAPL'])
 
-    @pytest.fixture
-    def fetcher(self, temp_cache_dir):
-        """Create a DataFetcher with temp cache directory."""
-        return DataFetcher(cache_dir=temp_cache_dir)
+        fetcher = DataFetcher()
+        result = fetcher.fetch_data(['AAPL'], '2023-01-01', '2023-01-10')
 
-    def test_init_creates_cache_directory(self, temp_cache_dir):
-        """Test that initialization creates cache directory."""
-        cache_path = Path(temp_cache_dir) / "new_cache"
-        fetcher = DataFetcher(cache_dir=str(cache_path))
-        assert cache_path.exists()
-        assert cache_path.is_dir()
-
-    def test_get_cache_key(self, fetcher):
-        """Test cache key generation."""
-        tickers = ['AAPL', 'MSFT', 'GOOGL']
-        start_date = '2023-01-01'
-        end_date = '2023-12-31'
-        source = 'yfinance'
-
-        cache_key = fetcher._get_cache_key(tickers, start_date, end_date, source)
-
-        assert isinstance(cache_key, str)
-        assert source in cache_key
-        assert start_date in cache_key
-        assert end_date in cache_key
-        for ticker in tickers:
-            assert ticker in cache_key
-
-    def test_get_cache_key_consistent_order(self, fetcher):
-        """Test that cache key is consistent regardless of ticker order."""
-        tickers1 = ['AAPL', 'MSFT', 'GOOGL']
-        tickers2 = ['GOOGL', 'AAPL', 'MSFT']
-        start_date = '2023-01-01'
-        end_date = '2023-12-31'
-        source = 'yfinance'
-
-        key1 = fetcher._get_cache_key(tickers1, start_date, end_date, source)
-        key2 = fetcher._get_cache_key(tickers2, start_date, end_date, source)
-
-        assert key1 == key2
-
-    @patch('data.fetcher.yf.download')
-    def test_fetch_yfinance_single_ticker(self, mock_download, fetcher):
-        """Test fetching data for a single ticker using yfinance."""
-        # Create mock data
-        dates = pd.date_range('2023-01-01', periods=10, freq='D')
-        mock_data = pd.DataFrame({
-            'Open': np.random.rand(10) * 100,
-            'High': np.random.rand(10) * 100,
-            'Low': np.random.rand(10) * 100,
-            'Close': np.random.rand(10) * 100,
-            'Volume': np.random.randint(1000000, 10000000, 10)
-        }, index=dates)
-        mock_data.index.name = 'Date'
-        mock_download.return_value = mock_data
-
-        result = fetcher._fetch_yfinance(['AAPL'], '2023-01-01', '2023-01-10')
-
-        assert isinstance(result, pd.DataFrame)
         assert isinstance(result.index, pd.MultiIndex)
-        assert result.index.names == ['Date', 'Ticker']
-        assert 'AAPL' in result.index.get_level_values('Ticker')
-        assert all(col in result.columns for col in ['Open', 'High', 'Low', 'Close', 'Volume'])
+        assert result.index.names == ['date', 'ticker']
 
-    @patch('data.fetcher.yf.download')
-    def test_fetch_yfinance_multiple_tickers(self, mock_download, fetcher):
+    @patch('data.fetcher.DataClient')
+    def test_fetch_data_has_ohlcv_columns(self, MockClient):
+        """Test that result has lowercase OHLCV columns."""
+        mock_client = MockClient.return_value
+        mock_client.get_data.return_value = _make_mock_wide_data(['AAPL'])
+
+        fetcher = DataFetcher()
+        result = fetcher.fetch_data(['AAPL'], '2023-01-01', '2023-01-10')
+
+        for col in ['open', 'high', 'low', 'close', 'volume']:
+            assert col in result.columns
+
+    @patch('data.fetcher.DataClient')
+    def test_fetch_data_multiple_tickers(self, MockClient):
         """Test fetching data for multiple tickers."""
-        dates = pd.date_range('2023-01-01', periods=10, freq='D')
-        mock_data = pd.DataFrame({
-            'Open': np.random.rand(10) * 100,
-            'High': np.random.rand(10) * 100,
-            'Low': np.random.rand(10) * 100,
-            'Close': np.random.rand(10) * 100,
-            'Volume': np.random.randint(1000000, 10000000, 10)
-        }, index=dates)
-        mock_data.index.name = 'Date'
-        mock_download.return_value = mock_data
-
         tickers = ['AAPL', 'MSFT']
-        result = fetcher._fetch_yfinance(tickers, '2023-01-01', '2023-01-10')
+        mock_client = MockClient.return_value
+        mock_client.get_data.return_value = _make_mock_wide_data(tickers)
 
-        assert isinstance(result, pd.DataFrame)
-        result_tickers = result.index.get_level_values('Ticker').unique()
-        assert len(result_tickers) == len(tickers)
+        fetcher = DataFetcher()
+        result = fetcher.fetch_data(tickers, '2023-01-01', '2023-01-10')
+
+        result_tickers = result.index.get_level_values('ticker').unique()
+        assert len(result_tickers) == 2
         for ticker in tickers:
             assert ticker in result_tickers
 
-    @patch('data.fetcher.yf.download')
-    def test_fetch_yfinance_empty_data_raises_error(self, mock_download, fetcher):
+    @patch('data.fetcher.DataClient')
+    def test_fetch_data_empty_raises_error(self, MockClient):
         """Test that empty data raises ValueError."""
-        mock_download.return_value = pd.DataFrame()
+        mock_client = MockClient.return_value
+        mock_client.get_data.return_value = pd.DataFrame()
 
-        with pytest.raises(ValueError, match="No data fetched for any ticker"):
-            fetcher._fetch_yfinance(['INVALID'], '2023-01-01', '2023-01-10')
+        fetcher = DataFetcher()
+        with pytest.raises(ValueError, match="No data found"):
+            fetcher.fetch_data(['INVALID'], '2023-01-01', '2023-01-10')
 
-    @patch('data.fetcher.yf.download')
-    def test_fetch_data_with_cache(self, mock_download, fetcher):
-        """Test that cached data is used when available."""
-        dates = pd.date_range('2023-01-01', periods=10, freq='D')
-        mock_data = pd.DataFrame({
-            'Open': np.random.rand(10) * 100,
-            'High': np.random.rand(10) * 100,
-            'Low': np.random.rand(10) * 100,
-            'Close': np.random.rand(10) * 100,
-            'Volume': np.random.randint(1000000, 10000000, 10)
-        }, index=dates)
-        mock_data.index.name = 'Date'
-        mock_download.return_value = mock_data
+    @patch('data.fetcher.DataClient')
+    def test_fetch_data_renames_symbol_to_ticker(self, MockClient):
+        """Test that findata's 'symbol' index is renamed to 'ticker'."""
+        mock_client = MockClient.return_value
+        mock_data = _make_mock_wide_data(['AAPL'])
+        assert mock_data.index.names == ['date', 'symbol']  # findata format
 
-        # First fetch - should call yfinance
-        result1 = fetcher.fetch_data(['AAPL'], '2023-01-01', '2023-01-10', use_cache=True)
-        assert mock_download.call_count == 1
+        mock_client.get_data.return_value = mock_data
 
-        # Second fetch - should use cache
-        result2 = fetcher.fetch_data(['AAPL'], '2023-01-01', '2023-01-10', use_cache=True)
-        assert mock_download.call_count == 1  # Should not call again
+        fetcher = DataFetcher()
+        result = fetcher.fetch_data(['AAPL'], '2023-01-01', '2023-01-10')
 
-        # Results should be equal
-        pd.testing.assert_frame_equal(result1, result2)
+        assert 'ticker' in result.index.names
+        assert 'symbol' not in result.index.names
 
-    @patch('data.fetcher.yf.download')
-    def test_fetch_data_without_cache(self, mock_download, fetcher):
-        """Test fetching without using cache."""
-        dates = pd.date_range('2023-01-01', periods=10, freq='D')
-        mock_data = pd.DataFrame({
-            'Open': np.random.rand(10) * 100,
-            'High': np.random.rand(10) * 100,
-            'Low': np.random.rand(10) * 100,
-            'Close': np.random.rand(10) * 100,
-            'Volume': np.random.randint(1000000, 10000000, 10)
-        }, index=dates)
-        mock_data.index.name = 'Date'
-        mock_download.return_value = mock_data
-
-        # Fetch twice without cache
-        fetcher.fetch_data(['AAPL'], '2023-01-01', '2023-01-10', use_cache=False)
-        fetcher.fetch_data(['AAPL'], '2023-01-01', '2023-01-10', use_cache=False)
-
-        assert mock_download.call_count == 2
-
-    def test_fetch_data_unknown_source_raises_error(self, fetcher):
-        """Test that unknown data source raises ValueError."""
-        with pytest.raises(ValueError, match="Unknown data source"):
-            fetcher.fetch_data(['AAPL'], '2023-01-01', '2023-01-10', source='unknown')
-
-    @patch('data.fetcher.yf.download')
-    def test_get_latest_data(self, mock_download, fetcher):
+    @patch('data.fetcher.DataClient')
+    def test_get_latest_data(self, MockClient):
         """Test get_latest_data method."""
-        dates = pd.date_range('2023-01-01', periods=10, freq='D')
-        mock_data = pd.DataFrame({
-            'Open': np.random.rand(10) * 100,
-            'High': np.random.rand(10) * 100,
-            'Low': np.random.rand(10) * 100,
-            'Close': np.random.rand(10) * 100,
-            'Volume': np.random.randint(1000000, 10000000, 10)
-        }, index=dates)
-        mock_data.index.name = 'Date'
-        mock_download.return_value = mock_data
+        mock_client = MockClient.return_value
+        mock_client.get_data.return_value = _make_mock_wide_data(['AAPL'])
 
+        fetcher = DataFetcher()
         result = fetcher.get_latest_data(['AAPL'], days=365)
 
         assert isinstance(result, pd.DataFrame)
-        assert mock_download.called
+        mock_client.get_data.assert_called_once()
+
+    @patch('data.fetcher.DataClient')
+    def test_get_latest_data_passes_correct_dates(self, MockClient):
+        """Test that get_latest_data calculates date range correctly."""
+        mock_client = MockClient.return_value
+        mock_client.get_data.return_value = _make_mock_wide_data(['AAPL'])
+
+        fetcher = DataFetcher()
+        fetcher.get_latest_data(['AAPL'], days=30)
+
+        call_kwargs = mock_client.get_data.call_args
+        assert call_kwargs.kwargs['start'] is not None
+        assert call_kwargs.kwargs['end'] is not None

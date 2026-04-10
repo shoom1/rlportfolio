@@ -81,7 +81,7 @@ class PortfolioEnv(gym.Env):
         self.transaction_cost = transaction_cost
 
         # Get unique dates
-        self.dates = data.index.get_level_values('Date').unique().sort_values()
+        self.dates = data.index.get_level_values('date').unique().sort_values()
         self.n_steps = len(self.dates) - window_size
 
         # Validate data
@@ -124,7 +124,7 @@ class PortfolioEnv(gym.Env):
 
     def _validate_data(self):
         """Validate that data contains all required tickers and features."""
-        data_tickers = self.data.index.get_level_values('Ticker').unique()
+        data_tickers = self.data.index.get_level_values('ticker').unique()
         for ticker in self.tickers:
             if ticker not in data_tickers:
                 raise ValueError(f"Ticker {ticker} not found in data")
@@ -329,7 +329,7 @@ class PortfolioEnv(gym.Env):
 
             for ticker in self.tickers:
                 try:
-                    ticker_data = self.data.xs((date, ticker), level=('Date', 'Ticker'))
+                    ticker_data = self.data.xs((date, ticker), level=('date', 'ticker'))
                     # Get only the requested feature columns, fill missing with 0
                     features = []
                     for col in self.feature_columns:
@@ -373,8 +373,8 @@ class PortfolioEnv(gym.Env):
 
         for ticker in self.tickers:
             try:
-                ticker_data = self.data.xs((date, ticker), level=('Date', 'Ticker'))
-                price = ticker_data['Close']
+                ticker_data = self.data.xs((date, ticker), level=('date', 'ticker'))
+                price = ticker_data['close']
                 # Ensure scalar value (not Series or array)
                 if hasattr(price, 'item'):
                     price = price.item()

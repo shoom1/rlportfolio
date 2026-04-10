@@ -42,8 +42,8 @@ class ReturnsFeature(Feature):
         super().__init__('returns')
 
     def compute(self, df: pd.DataFrame) -> pd.DataFrame:
-        df['returns'] = df['Close'].pct_change()
-        df['log_returns'] = np.log(df['Close'] / df['Close'].shift(1))
+        df['returns'] = df['close'].pct_change()
+        df['log_returns'] = np.log(df['close'] / df['close'].shift(1))
         return df
 
     def get_column_names(self) -> List[str]:
@@ -59,7 +59,7 @@ class VolatilityFeature(Feature):
 
     def compute(self, df: pd.DataFrame) -> pd.DataFrame:
         if 'returns' not in df.columns:
-            df['returns'] = df['Close'].pct_change()
+            df['returns'] = df['close'].pct_change()
         df[f'volatility_{self.window}'] = df['returns'].rolling(window=self.window).std()
         return df
 
@@ -75,7 +75,7 @@ class SMAFeature(Feature):
         self.window = window
 
     def compute(self, df: pd.DataFrame) -> pd.DataFrame:
-        df[f'sma_{self.window}'] = df['Close'].rolling(window=self.window).mean()
+        df[f'sma_{self.window}'] = df['close'].rolling(window=self.window).mean()
         return df
 
     def get_column_names(self) -> List[str]:
@@ -90,7 +90,7 @@ class EMAFeature(Feature):
         self.span = span
 
     def compute(self, df: pd.DataFrame) -> pd.DataFrame:
-        df[f'ema_{self.span}'] = df['Close'].ewm(span=self.span, adjust=False).mean()
+        df[f'ema_{self.span}'] = df['close'].ewm(span=self.span, adjust=False).mean()
         return df
 
     def get_column_names(self) -> List[str]:
@@ -105,7 +105,7 @@ class RSIFeature(Feature):
         self.length = length
 
     def compute(self, df: pd.DataFrame) -> pd.DataFrame:
-        rsi = ta.rsi(df['Close'], length=self.length)
+        rsi = ta.rsi(df['close'], length=self.length)
         df[f'rsi_{self.length}'] = rsi
         return df
 
@@ -123,7 +123,7 @@ class MACDFeature(Feature):
         self.signal = signal
 
     def compute(self, df: pd.DataFrame) -> pd.DataFrame:
-        macd = ta.macd(df['Close'], fast=self.fast, slow=self.slow, signal=self.signal)
+        macd = ta.macd(df['close'], fast=self.fast, slow=self.slow, signal=self.signal)
         if macd is not None:
             # Find actual column names (pandas-ta naming may vary)
             macd_col = [c for c in macd.columns if c.startswith('MACD_')][0]
@@ -148,7 +148,7 @@ class BollingerBandsFeature(Feature):
         self.std = std
 
     def compute(self, df: pd.DataFrame) -> pd.DataFrame:
-        bbands = ta.bbands(df['Close'], length=self.length, std=self.std)
+        bbands = ta.bbands(df['close'], length=self.length, std=self.std)
         if bbands is not None:
             # Handle both old and new pandas-ta column naming
             # Old: BBU_20_2.0, New: BBU_20_2 or BBU_20_2.00
@@ -182,7 +182,7 @@ class BollingerBandsFeature(Feature):
                 df['bb_middle'] = bbands[middle_col]
                 df['bb_lower'] = bbands[lower_col]
                 df['bb_width'] = (df['bb_upper'] - df['bb_lower']) / df['bb_middle']
-                df['bb_percent'] = (df['Close'] - df['bb_lower']) / (df['bb_upper'] - df['bb_lower'])
+                df['bb_percent'] = (df['close'] - df['bb_lower']) / (df['bb_upper'] - df['bb_lower'])
         return df
 
     def get_column_names(self) -> List[str]:
@@ -197,7 +197,7 @@ class ATRFeature(Feature):
         self.length = length
 
     def compute(self, df: pd.DataFrame) -> pd.DataFrame:
-        atr = ta.atr(df['High'], df['Low'], df['Close'], length=self.length)
+        atr = ta.atr(df['high'], df['low'], df['close'], length=self.length)
         df[f'atr_{self.length}'] = atr
         return df
 
@@ -213,8 +213,8 @@ class VolumeFeature(Feature):
         self.window = window
 
     def compute(self, df: pd.DataFrame) -> pd.DataFrame:
-        df[f'volume_sma_{self.window}'] = df['Volume'].rolling(window=self.window).mean()
-        df['volume_ratio'] = df['Volume'] / df[f'volume_sma_{self.window}']
+        df[f'volume_sma_{self.window}'] = df['volume'].rolling(window=self.window).mean()
+        df['volume_ratio'] = df['volume'] / df[f'volume_sma_{self.window}']
         return df
 
     def get_column_names(self) -> List[str]:
@@ -326,19 +326,19 @@ class FeatureEngineer:
             feature_names = self.get_default_feature_names()
 
         # Get list of tickers
-        tickers = data.index.get_level_values('Ticker').unique()
+        tickers = data.index.get_level_values('ticker').unique()
 
         # Process each ticker separately
         processed_dfs = []
         for ticker in tickers:
-            ticker_df = data.xs(ticker, level='Ticker').copy()
+            ticker_df = data.xs(ticker, level='ticker').copy()
             ticker_df = self.registry.compute_features(ticker_df, feature_names)
-            ticker_df['Ticker'] = ticker
+            ticker_df['ticker'] = ticker
             processed_dfs.append(ticker_df)
 
         # Combine back
         result = pd.concat(processed_dfs)
-        result = result.reset_index().set_index(['Date', 'Ticker']).sort_index()
+        result = result.reset_index().set_index(['date', 'ticker']).sort_index()
 
         return result
 
@@ -385,12 +385,12 @@ class FeatureEngineer:
 
         if normalize:
             # Normalize price-based features using percent change from lookback
-            price_cols = ['Open', 'High', 'Low', 'Close', 'sma_20', 'sma_50',
+            price_cols = ['open', 'high', 'low', 'close', 'sma_20', 'sma_50',
                          'ema_12', 'ema_26', 'bb_upper', 'bb_middle', 'bb_lower']
 
             for col in price_cols:
                 if col in df.columns:
-                    df[f'{col}_norm'] = df.groupby(level='Ticker')[col].pct_change(lookback_window)
+                    df[f'{col}_norm'] = df.groupby(level='ticker')[col].pct_change(lookback_window)
 
             # RSI is already 0-100, normalize to 0-1
             if 'rsi_14' in df.columns:
@@ -398,7 +398,7 @@ class FeatureEngineer:
 
             # ATR normalized by price
             if 'atr_14' in df.columns:
-                df['atr_14_norm'] = df['atr_14'] / df['Close']
+                df['atr_14_norm'] = df['atr_14'] / df['close']
 
         return df
 
@@ -415,14 +415,14 @@ class FeatureEngineer:
         if normalize:
             return [
                 'returns', 'log_returns', 'volatility_20',
-                'Close_norm', 'sma_20_norm', 'sma_50_norm',
+                'close_norm', 'sma_20_norm', 'sma_50_norm',
                 'rsi_14_norm', 'macd', 'macd_signal',
                 'bb_width', 'bb_percent', 'atr_14_norm', 'volume_ratio'
             ]
         else:
             return [
                 'returns', 'log_returns', 'volatility_20',
-                'Close', 'sma_20', 'sma_50',
+                'close', 'sma_20', 'sma_50',
                 'rsi_14', 'macd', 'macd_signal',
                 'bb_upper', 'bb_lower', 'atr_14', 'volume_ratio'
             ]
