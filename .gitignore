@@ -38,8 +38,7 @@ ENV/
 .ipynb_checkpoints/
 *.ipynb
 
-# Data and Models
-data/cache/*.pkl
+# Models
 training/models/*.zip
 training/models/**/*.zip
 *.h5

@@ -27,7 +27,7 @@ class TestRebalancingBugFix:
     @pytest.fixture
     def simple_env(self, env_data, sample_tickers):
         """Create a simple environment for testing."""
-        feature_cols = ['returns', 'Close', 'sma_20']
+        feature_cols = ['returns', 'close', 'sma_20']
         env = PortfolioEnv(
             data=env_data,
             feature_columns=feature_cols,

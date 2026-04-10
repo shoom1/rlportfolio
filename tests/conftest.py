@@ -23,18 +23,18 @@ def sample_ohlcv_data():
         close_prices = base_price * np.cumprod(1 + returns)
 
         df = pd.DataFrame({
-            'Date': dates,
-            'Ticker': ticker,
-            'Open': close_prices * (1 + np.random.uniform(-0.01, 0.01, len(dates))),
-            'High': close_prices * (1 + np.random.uniform(0, 0.02, len(dates))),
-            'Low': close_prices * (1 + np.random.uniform(-0.02, 0, len(dates))),
-            'Close': close_prices,
-            'Volume': np.random.randint(1000000, 10000000, len(dates))
+            'date': dates,
+            'ticker': ticker,
+            'open': close_prices * (1 + np.random.uniform(-0.01, 0.01, len(dates))),
+            'high': close_prices * (1 + np.random.uniform(0, 0.02, len(dates))),
+            'low': close_prices * (1 + np.random.uniform(-0.02, 0, len(dates))),
+            'close': close_prices,
+            'volume': np.random.randint(1000000, 10000000, len(dates))
         })
         data_frames.append(df)
 
     combined = pd.concat(data_frames, ignore_index=True)
-    combined = combined.set_index(['Date', 'Ticker'])
+    combined = combined.set_index(['date', 'ticker'])
 
     return combined
 
@@ -70,7 +70,7 @@ def feature_columns():
     """Sample feature column names."""
     return [
         'returns', 'log_returns', 'volatility_20',
-        'Close', 'sma_20', 'sma_50',
+        'close', 'sma_20', 'sma_50',
         'rsi_14', 'macd', 'macd_signal',
         'bb_upper', 'bb_lower', 'atr_14', 'volume_ratio'
     ]

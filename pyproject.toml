@@ -8,10 +8,9 @@ version = "0.1.0"
 description = "Reinforcement learning portfolio optimization system"
 requires-python = ">=3.8"
 dependencies = [
+    "findata",
     "stable-baselines3[extra]>=2.7.0",
     "gymnasium>=1.0.0",
-    "yfinance>=0.2.36",
-    "polygon-api-client>=1.12.5",
     "pandas-ta>=0.4.25b",
     "numpy>=1.26,<2.0.0",
     "pandas>=2.2.2",

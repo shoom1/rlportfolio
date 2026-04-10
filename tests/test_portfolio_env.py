@@ -25,7 +25,7 @@ class TestPortfolioEnv:
     @pytest.fixture
     def simple_env(self, env_data, sample_tickers):
         """Create a simple portfolio environment."""
-        feature_cols = ['returns', 'Close', 'sma_20']
+        feature_cols = ['returns', 'close', 'sma_20']
         env = PortfolioEnv(
             data=env_data,
             feature_columns=feature_cols,
@@ -199,7 +199,7 @@ class TestPortfolioEnv:
 
     def test_validate_data_missing_ticker_raises_error(self, env_data, sample_tickers):
         """Test that missing ticker raises error."""
-        feature_cols = ['returns', 'Close']
+        feature_cols = ['returns', 'close']
         invalid_tickers = sample_tickers + ['INVALID']
 
         with pytest.raises(ValueError, match="Ticker .* not found in data"):
@@ -240,7 +240,7 @@ class TestPortfolioEnv:
         """Test environment with custom reward function."""
         from environment.rewards import SharpeReward
 
-        feature_cols = ['returns', 'Close', 'sma_20']
+        feature_cols = ['returns', 'close', 'sma_20']
         reward_fn = SharpeReward(window=20)
 
         env = PortfolioEnv(

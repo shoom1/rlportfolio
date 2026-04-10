@@ -18,7 +18,7 @@ class TestReturnsFeature:
     def test_compute_returns(self):
         """Test that returns are computed correctly."""
         df = pd.DataFrame({
-            'Close': [100, 102, 101, 103, 105]
+            'close': [100, 102, 101, 103, 105]
         })
 
         feature = ReturnsFeature()
@@ -44,7 +44,7 @@ class TestVolatilityFeature:
         np.random.seed(42)
         returns = np.random.normal(0.001, 0.02, 100)
         df = pd.DataFrame({
-            'Close': 100 * np.cumprod(1 + returns)
+            'close': 100 * np.cumprod(1 + returns)
         })
 
         feature = VolatilityFeature(window=20)
@@ -67,7 +67,7 @@ class TestSMAFeature:
     def test_compute_sma(self):
         """Test SMA computation."""
         df = pd.DataFrame({
-            'Close': [100, 102, 101, 103, 105, 104, 106, 108, 107, 109]
+            'close': [100, 102, 101, 103, 105, 104, 106, 108, 107, 109]
         })
 
         feature = SMAFeature(window=3)
@@ -90,7 +90,7 @@ class TestEMAFeature:
     def test_compute_ema(self):
         """Test EMA computation."""
         df = pd.DataFrame({
-            'Close': [100, 102, 101, 103, 105, 104, 106, 108, 107, 109]
+            'close': [100, 102, 101, 103, 105, 104, 106, 108, 107, 109]
         })
 
         feature = EMAFeature(span=3)
@@ -114,7 +114,7 @@ class TestRSIFeature:
         np.random.seed(42)
         returns = np.random.normal(0.001, 0.02, 100)
         df = pd.DataFrame({
-            'Close': 100 * np.cumprod(1 + returns)
+            'close': 100 * np.cumprod(1 + returns)
         })
 
         feature = RSIFeature(length=14)
@@ -140,7 +140,7 @@ class TestMACDFeature:
         np.random.seed(42)
         returns = np.random.normal(0.001, 0.02, 100)
         df = pd.DataFrame({
-            'Close': 100 * np.cumprod(1 + returns)
+            'close': 100 * np.cumprod(1 + returns)
         })
 
         feature = MACDFeature(fast=12, slow=26, signal=9)
@@ -165,7 +165,7 @@ class TestBollingerBandsFeature:
         np.random.seed(42)
         returns = np.random.normal(0.001, 0.02, 100)
         df = pd.DataFrame({
-            'Close': 100 * np.cumprod(1 + returns)
+            'close': 100 * np.cumprod(1 + returns)
         })
 
         feature = BollingerBandsFeature(length=20, std=2.0)
@@ -193,9 +193,9 @@ class TestATRFeature:
         """Test ATR computation."""
         np.random.seed(42)
         df = pd.DataFrame({
-            'High': 100 + np.random.rand(100) * 10,
-            'Low': 100 - np.random.rand(100) * 10,
-            'Close': 100 + np.random.randn(100) * 5
+            'high': 100 + np.random.rand(100) * 10,
+            'low': 100 - np.random.rand(100) * 10,
+            'close': 100 + np.random.randn(100) * 5
         })
 
         feature = ATRFeature(length=14)
@@ -218,7 +218,7 @@ class TestVolumeFeature:
     def test_compute_volume_features(self):
         """Test volume-based features."""
         df = pd.DataFrame({
-            'Volume': np.random.randint(1000000, 10000000, 100)
+            'volume': np.random.randint(1000000, 10000000, 100)
         })
 
         feature = VolumeFeature(window=20)
@@ -270,7 +270,7 @@ class TestFeatureRegistry:
         registry.register(SMAFeature(3))
 
         df = pd.DataFrame({
-            'Close': [100, 102, 101, 103, 105]
+            'close': [100, 102, 101, 103, 105]
         })
 
         result = registry.compute_features(df, ['returns', 'sma_3'])
@@ -282,7 +282,7 @@ class TestFeatureRegistry:
     def test_compute_unknown_feature_raises_error(self):
         """Test that computing unknown feature raises error."""
         registry = FeatureRegistry()
-        df = pd.DataFrame({'Close': [100, 102, 101]})
+        df = pd.DataFrame({'close': [100, 102, 101]})
 
         with pytest.raises(ValueError, match="Unknown feature"):
             registry.compute_features(df, ['unknown_feature'])
@@ -317,7 +317,7 @@ class TestFeatureEngineer:
         result = engineer.compute_features(sample_ohlcv_data, feature_names)
 
         assert isinstance(result.index, pd.MultiIndex)
-        assert result.index.names == ['Date', 'Ticker']
+        assert result.index.names == ['date', 'ticker']
         assert 'returns' in result.columns
         assert 'log_returns' in result.columns
         assert 'sma_20' in result.columns
@@ -358,9 +358,9 @@ class TestFeatureEngineer:
         normalized_cols = engineer.create_observation_columns(normalize=True)
         assert isinstance(normalized_cols, list)
         assert 'returns' in normalized_cols
-        assert 'Close_norm' in normalized_cols
+        assert 'close_norm' in normalized_cols
 
         unnormalized_cols = engineer.create_observation_columns(normalize=False)
         assert isinstance(unnormalized_cols, list)
         assert 'returns' in unnormalized_cols
-        assert 'Close' in unnormalized_cols
+        assert 'close' in unnormalized_cols
