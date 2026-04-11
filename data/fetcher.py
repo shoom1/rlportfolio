@@ -1,15 +1,15 @@
 """
-Data fetcher module - thin adapter around findata.DataClient.
+Data fetcher module - thin adapter around finbase.DataClient.
 Provides market data with (date, ticker) MultiIndex and lowercase OHLCV columns.
 """
 
 from typing import List, Optional
 import pandas as pd
-from findata import DataClient
+from finbase import DataClient
 
 
 class DataFetcher:
-    """Fetches historical market data via findata."""
+    """Fetches historical market data via finbase."""
 
     def __init__(self):
         self.client = DataClient()
