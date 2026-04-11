@@ -1,5 +1,5 @@
 """
-Unit tests for data/fetcher.py - DataFetcher using findata.DataClient.
+Unit tests for data/fetcher.py - DataFetcher using finbase.DataClient.
 """
 
 import pytest
@@ -10,7 +10,7 @@ from data.fetcher import DataFetcher
 
 
 def _make_mock_wide_data(tickers, n_days=10):
-    """Create mock wide-format data matching findata output."""
+    """Create mock wide-format data matching finbase output."""
     dates = pd.date_range('2023-01-01', periods=n_days, freq='D')
     rows = []
     for date in dates:
@@ -81,10 +81,10 @@ class TestDataFetcher:
 
     @patch('data.fetcher.DataClient')
     def test_fetch_data_renames_symbol_to_ticker(self, MockClient):
-        """Test that findata's 'symbol' index is renamed to 'ticker'."""
+        """Test that finbase's 'symbol' index is renamed to 'ticker'."""
         mock_client = MockClient.return_value
         mock_data = _make_mock_wide_data(['AAPL'])
-        assert mock_data.index.names == ['date', 'symbol']  # findata format
+        assert mock_data.index.names == ['date', 'symbol']  # finbase format
 
         mock_client.get_data.return_value = mock_data
 
