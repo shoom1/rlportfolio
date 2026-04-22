@@ -10,7 +10,7 @@ from rich.console import Console
 from rich.table import Table
 from rich import print as rprint
 
-from .tracker import PortfolioExperimentTracker
+from .portfolio_tracker import PortfolioExperimentTracker
 from .comparison import ExperimentComparison
 
 

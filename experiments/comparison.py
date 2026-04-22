@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from pathlib import Path
 from typing import List, Dict, Optional, Any
-from .tracker import PortfolioExperimentTracker
+from .portfolio_tracker import PortfolioExperimentTracker
 
 
 class ExperimentComparison:
