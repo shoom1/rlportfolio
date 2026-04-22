@@ -7,6 +7,11 @@ import pandas as pd
 import gymnasium as gym
 from gymnasium import spaces
 from typing import Optional, Dict, List, Tuple, Any, Union
+from .constants import (
+    DEFAULT_INITIAL_BALANCE,
+    DEFAULT_TRANSACTION_COST,
+    TRADE_EPSILON,
+)
 from .rewards import RewardFunction, SimpleReturnReward
 from .transaction_costs import (
     CombinedCostModel,
@@ -32,8 +37,8 @@ class PortfolioEnv(gym.Env):
         data: pd.DataFrame,
         feature_columns: List[str],
         tickers: List[str],
-        initial_balance: float = 10000.0,
-        transaction_cost: float = 0.001,
+        initial_balance: float = DEFAULT_INITIAL_BALANCE,
+        transaction_cost: float = DEFAULT_TRANSACTION_COST,
         cost_model: Optional[CombinedCostModel] = None,
         reward_function: Optional[RewardFunction] = None,
         window_size: int = 20,
@@ -136,18 +141,30 @@ class PortfolioEnv(gym.Env):
     def reset(
         self,
         seed: Optional[int] = None,
-        options: Optional[Dict[str, Any]] = None
+        options: Optional[Dict[str, Any]] = None,
+        start_step: int = 0,
     ) -> Tuple[np.ndarray, Dict[str, Any]]:
-        """Reset the environment."""
+        """Reset the environment.
+
+        start_step lets callers (e.g. walk-forward backtesting) place the env
+        mid-data. Must be in [0, n_steps - 1]. The observation window ends at
+        dates[window_size + start_step - 1]; the first tradable bar is
+        dates[window_size + start_step].
+        """
         super().reset(seed=seed)
 
-        self.current_step = 0
+        if not 0 <= start_step < self.n_steps:
+            raise ValueError(
+                f"start_step={start_step} out of range [0, {self.n_steps - 1}]"
+            )
+
+        self.current_step = start_step
         self.portfolio_value = self.initial_balance
         self.cash = self.initial_balance
         self.holdings = np.zeros(self.n_assets)
         self.weights = np.zeros(self.n_assets)
         self.portfolio_history = [{
-            'date': self.dates[self.window_size],
+            'date': self.dates[self.window_size + start_step],
             'value': self.portfolio_value,
             'weights': self.weights.copy(),
             'cash': self.cash
@@ -292,7 +309,7 @@ class PortfolioEnv(gym.Env):
         # Create TradeInfo objects for cost calculation
         trade_infos = []
         for i, ticker in enumerate(self.tickers):
-            if abs(trades[i]) > 1e-6:  # Only include non-trivial trades
+            if abs(trades[i]) > TRADE_EPSILON:  # Only include non-trivial trades
                 trade_infos.append(TradeInfo(
                     ticker=ticker,
                     shares_traded=trades[i],
@@ -383,11 +400,16 @@ class PortfolioEnv(gym.Env):
                 else:
                     price = float(price)
             except KeyError:
-                # Use previous price if current not available
+                # Fall back to the previous step's price for sparse data;
+                # on step 0 we have nothing to fall back to, so fail loudly
+                # rather than silently inventing a price.
                 if step > 0:
                     price = self._get_prices(step - 1)[self.tickers.index(ticker)]
                 else:
-                    price = 100.0  # Default price
+                    raise ValueError(
+                        f"Missing price for {ticker} at {date} (step 0). "
+                        f"Ensure data is forward-filled before constructing the env."
+                    )
 
             prices.append(price)
 
@@ -421,50 +443,3 @@ class PortfolioEnv(gym.Env):
     def get_portfolio_history(self) -> pd.DataFrame:
         """Get portfolio history as DataFrame."""
         return pd.DataFrame(self.portfolio_history)
-
-
-if __name__ == "__main__":
-    # Example usage
-    import sys
-    sys.path.append('..')
-    from data.fetcher import DataFetcher
-    from data.features import FeatureEngineer
-
-    # Fetch and prepare data
-    print("Fetching data...")
-    fetcher = DataFetcher()
-    tickers = ['AAPL', 'MSFT', 'GOOGL']
-    data = fetcher.get_latest_data(tickers, days=500)
-
-    print("Computing features...")
-    engineer = FeatureEngineer()
-    features_data = engineer.compute_features(data)
-    env_data = engineer.prepare_for_environment(features_data)
-
-    # Create environment
-    feature_cols = engineer.create_observation_columns(normalize=True)
-    env = PortfolioEnv(
-        data=env_data,
-        feature_columns=feature_cols,
-        tickers=tickers,
-        initial_balance=10000.0,
-        transaction_cost=0.001
-    )
-
-    print(f"\nEnvironment created successfully!")
-    print(f"Action space: {env.action_space}")
-    print(f"Observation space: {env.observation_space}")
-
-    # Test environment
-    print("\nTesting environment...")
-    obs, info = env.reset()
-    print(f"Initial observation shape: {obs.shape}")
-    print(f"Initial info: {info}")
-
-    # Take a random action
-    action = env.action_space.sample()
-    obs, reward, terminated, truncated, info = env.step(action)
-    print(f"\nAfter step:")
-    print(f"Reward: {reward:.4f}")
-    print(f"Portfolio value: ${info['portfolio_value']:.2f}")
-    print(f"Weights: {info['weights']}")

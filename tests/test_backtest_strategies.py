@@ -12,7 +12,9 @@ from evaluation.backtest_strategies import (
     WalkForwardBacktestStrategy,
     MonteCarloBacktestStrategy
 )
-from evaluation.baselines import EqualWeightStrategy
+from evaluation.baselines import EqualWeightStrategy, RandomStrategy
+from environment.portfolio_env import PortfolioEnv
+from data.features import FeatureEngineer
 
 
 class MockAgent:
@@ -35,11 +37,11 @@ class MockEnv:
         self.current_step = 0
         self.data = pd.DataFrame({'dummy': range(n_steps)})
 
-    def reset(self, seed=None):
+    def reset(self, seed=None, start_step=0):
         """Reset environment."""
         if seed is not None:
             np.random.seed(seed)
-        self.current_step = 0
+        self.current_step = start_step
         obs = np.random.random(10)
         info = {}
         return obs, info
@@ -371,6 +373,198 @@ class TestMonteCarloBacktestStrategy:
 
         mean_final = history['value'].iloc[-1]
         assert min(final_values) <= mean_final <= max(final_values)
+
+
+class TestWalkForwardRealEnv:
+    """Regression tests that use a real PortfolioEnv (not MockEnv).
+
+    These guard the C2 walk-forward bugs:
+      - env.reset() clobbered the manual current_step assignment
+      - total_steps used len(env.data) which is n_dates * n_tickers
+      - fold termination compared current_step to a bound measured from step 0
+    """
+
+    @pytest.fixture
+    def real_env(self, sample_ohlcv_data, sample_tickers):
+        engineer = FeatureEngineer()
+        features = engineer.compute_features(sample_ohlcv_data, ['returns'])
+        prepared = engineer.prepare_for_environment(features, normalize=False)
+        env = PortfolioEnv(
+            data=prepared,
+            feature_columns=['returns'],
+            tickers=sample_tickers,
+            initial_balance=10000.0,
+            transaction_cost=0.0,
+            window_size=5,
+        )
+        return env
+
+    def test_fold_count_uses_n_steps_not_len_data(self, real_env):
+        """With 3 tickers, len(env.data) == 3 * n_dates. Fold count must
+        scale with n_dates only — otherwise walk-forward would produce
+        n_tickers times too many folds."""
+        wf = WalkForwardBacktestStrategy(
+            train_window=20, test_window=10, step_size=10
+        )
+        baseline = EqualWeightStrategy()
+        wf.execute_baseline(baseline, real_env)
+
+        n_steps = real_env.n_steps  # ~95 for sample_ohlcv_data (100 dates - 5 window)
+        expected_folds = max(0, (n_steps - 20 - 10) // 10 + 1)
+        assert len(wf.fold_results) == expected_folds
+
+    def test_fold_start_dates_advance_by_step_size(self, real_env):
+        """Each fold's first history entry must be dates[window_size + test_start],
+        advancing by step_size bars from fold to fold."""
+        wf = WalkForwardBacktestStrategy(
+            train_window=15, test_window=10, step_size=10
+        )
+        baseline = EqualWeightStrategy()
+        combined = wf.execute_baseline(baseline, real_env)
+
+        folds = wf.get_fold_results()
+        assert len(folds) >= 2, "need at least two folds to verify offset"
+
+        # Walk the combined history and extract each fold's first date.
+        # Each fold contributes a sub-history that begins with the initial
+        # reset entry at date[window_size + test_start].
+        fold_start_dates = []
+        offset = 0
+        for fold in folds:
+            first_date = combined['date'].iloc[offset]
+            fold_start_dates.append(pd.Timestamp(first_date))
+            offset += fold['n_steps']
+
+        # Fold i's start date = env.dates[window_size + test_start_i]
+        expected = [
+            real_env.dates[real_env.window_size + fold['test_start']]
+            for fold in folds
+        ]
+        assert [pd.Timestamp(d) for d in expected] == fold_start_dates
+
+    def test_folds_do_not_all_start_at_step_zero(self, real_env):
+        """Regression: folds used to all start at env step 0 because
+        env.reset() clobbered the manual current_step assignment."""
+        wf = WalkForwardBacktestStrategy(
+            train_window=15, test_window=10, step_size=10
+        )
+        baseline = EqualWeightStrategy()
+        wf.execute_baseline(baseline, real_env)
+
+        folds = wf.get_fold_results()
+        assert len({f['test_start'] for f in folds}) == len(folds), \
+            "fold test_start offsets must be distinct"
+
+
+class TestPortfolioEnvStartStep:
+    """Tests for the new start_step parameter on PortfolioEnv.reset()."""
+
+    @pytest.fixture
+    def env(self, sample_ohlcv_data, sample_tickers):
+        engineer = FeatureEngineer()
+        features = engineer.compute_features(sample_ohlcv_data, ['returns'])
+        prepared = engineer.prepare_for_environment(features, normalize=False)
+        return PortfolioEnv(
+            data=prepared,
+            feature_columns=['returns'],
+            tickers=sample_tickers,
+            window_size=5,
+        )
+
+    def test_start_step_sets_current_step(self, env):
+        obs, info = env.reset(start_step=7)
+        assert env.current_step == 7
+
+    def test_start_step_sets_initial_history_date(self, env):
+        env.reset(start_step=7)
+        history = env.get_portfolio_history()
+        assert pd.Timestamp(history['date'].iloc[0]) == \
+            env.dates[env.window_size + 7]
+
+    def test_start_step_out_of_range_raises(self, env):
+        with pytest.raises(ValueError, match="out of range"):
+            env.reset(start_step=env.n_steps)
+        with pytest.raises(ValueError, match="out of range"):
+            env.reset(start_step=-1)
+
+    def test_start_step_zero_is_default(self, env):
+        o1, _ = env.reset()
+        o2, _ = env.reset(start_step=0)
+        np.testing.assert_array_equal(o1, o2)
+
+
+class TestMonteCarloRandomVaries:
+    """Regression tests for MC + RandomStrategy seeding."""
+
+    def test_random_strategy_reseeds_across_simulations(self):
+        """Each simulation must get distinct RNG state. Previously all
+        simulations shared one RandomState seeded at __init__."""
+        mc = MonteCarloBacktestStrategy(n_simulations=5, seeds=[1, 2, 3, 4, 5])
+        baseline = RandomStrategy()
+        env = MockEnv(n_steps=40)
+
+        mc.execute_baseline(baseline, env)
+        results = mc.get_simulation_results()
+
+        # Not all simulations should collapse to the same final value.
+        final_values = {round(r['final_value'], 6) for r in results}
+        assert len(final_values) > 1
+
+    def test_random_strategy_reset_is_deterministic_given_seed(self):
+        """reset(seed=k) must produce the same action sequence every time."""
+        strat = RandomStrategy()
+        strat.reset(seed=42)
+        a1 = [strat.get_action(env=type('E', (), {'n_assets': 3})(), step=i)
+              for i in range(5)]
+        strat.reset(seed=42)
+        a2 = [strat.get_action(env=type('E', (), {'n_assets': 3})(), step=i)
+              for i in range(5)]
+        for x, y in zip(a1, a2):
+            np.testing.assert_array_equal(x, y)
+
+
+class TestMonteCarloAggregation:
+    """Regression tests for _aggregate_histories robustness."""
+
+    def test_ragged_histories_are_truncated_to_min_len(self):
+        mc = MonteCarloBacktestStrategy(n_simulations=3)
+        histories = [
+            pd.DataFrame({'value': [100, 110, 120, 130, 140]}),
+            pd.DataFrame({'value': [100, 105, 115]}),
+            pd.DataFrame({'value': [100, 108, 112, 119]}),
+        ]
+        agg = mc._aggregate_histories(histories, method='mean')
+        assert len(agg) == 3  # min_len
+
+    def test_aggregated_frame_drops_run_dependent_columns(self):
+        """Weights/cash/transaction_cost are per-run and must not be copied
+        verbatim from simulation 0 onto mean values."""
+        mc = MonteCarloBacktestStrategy(n_simulations=2)
+        histories = [
+            pd.DataFrame({
+                'value': [100, 110, 120],
+                'weights': [np.array([1.0, 0.0, 0.0]),
+                            np.array([0.5, 0.5, 0.0]),
+                            np.array([0.33, 0.33, 0.34])],
+                'cash': [100, 50, 0],
+            }),
+            pd.DataFrame({
+                'value': [100, 105, 115],
+                'weights': [np.array([0.0, 1.0, 0.0]),
+                            np.array([0.0, 0.5, 0.5]),
+                            np.array([0.34, 0.33, 0.33])],
+                'cash': [50, 25, 0],
+            }),
+        ]
+        agg = mc._aggregate_histories(histories, method='mean')
+        assert 'value' in agg.columns
+        assert 'return' in agg.columns
+        assert 'weights' not in agg.columns
+        assert 'cash' not in agg.columns
+
+    def test_seeds_too_short_raises(self):
+        with pytest.raises(ValueError, match="n_simulations"):
+            MonteCarloBacktestStrategy(n_simulations=10, seeds=[1, 2, 3])
 
 
 class TestBacktestStrategyIntegration:

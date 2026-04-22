@@ -48,6 +48,20 @@ pip install -r requirements.txt
 
 **Why conda?** Better dependency resolution for scientific computing packages (numpy, scipy, matplotlib) and easier management of platform-specific binaries.
 
+### Development install
+
+To work on the code and run the test suite, install the project in editable mode:
+
+```bash
+pip install -e .
+```
+
+This registers the `data`, `environment`, `evaluation`, `experiments`, and `training` packages on `sys.path` so imports resolve without needing a working directory hack. Run the tests with:
+
+```bash
+pytest tests/
+```
+
 ## Quick Start
 
 ### 1. Train an Agent

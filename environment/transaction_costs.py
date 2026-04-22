@@ -10,6 +10,8 @@ from abc import ABC, abstractmethod
 from typing import Dict, Optional, List
 from dataclasses import dataclass
 
+from .constants import DEFAULT_TRANSACTION_COST, TRADE_EPSILON
+
 
 @dataclass
 class TradeInfo:
@@ -20,6 +22,18 @@ class TradeInfo:
     portfolio_value: float
     daily_volume: Optional[float] = None  # For volume-based models
     bid_ask_spread: Optional[float] = None  # For spread-based models
+
+    @property
+    def trade_value(self) -> float:
+        """Absolute dollar value of the trade."""
+        return abs(self.shares_traded * self.price)
+
+    @property
+    def trade_fraction(self) -> float:
+        """Trade value as a fraction of portfolio value (0 if portfolio is empty)."""
+        if self.portfolio_value <= 0:
+            return 0.0
+        return self.trade_value / self.portfolio_value
 
 
 class TransactionCostModel(ABC):
@@ -81,7 +95,7 @@ class FixedCostModel(TransactionCostModel):
     ) -> float:
         """Calculate total fixed costs."""
         # Count non-zero trades
-        n_trades = sum(1 for trade in trades if abs(trade.shares_traded) > 1e-6)
+        n_trades = sum(1 for trade in trades if abs(trade.shares_traded) > TRADE_EPSILON)
         return n_trades * self.cost_per_trade
 
 
@@ -93,7 +107,7 @@ class ProportionalCostModel(TransactionCostModel):
     Most commonly used model in academic literature.
     """
 
-    def __init__(self, cost_rate: float = 0.001, name: str = 'proportional'):
+    def __init__(self, cost_rate: float = DEFAULT_TRANSACTION_COST, name: str = 'proportional'):
         """
         Initialize proportional cost model.
 
@@ -110,11 +124,7 @@ class ProportionalCostModel(TransactionCostModel):
         **kwargs
     ) -> float:
         """Calculate proportional costs."""
-        total_cost = 0.0
-        for trade in trades:
-            trade_value = abs(trade.shares_traded * trade.price)
-            total_cost += trade_value * self.cost_rate
-        return total_cost
+        return sum(trade.trade_value * self.cost_rate for trade in trades)
 
 
 class TieredCostModel(TransactionCostModel):
@@ -160,7 +170,7 @@ class TieredCostModel(TransactionCostModel):
     ) -> float:
         """Calculate tiered costs."""
         # Calculate total trade value
-        total_value = sum(abs(trade.shares_traded * trade.price) for trade in trades)
+        total_value = sum(trade.trade_value for trade in trades)
 
         # Apply tiered pricing
         total_cost = 0.0
@@ -195,7 +205,7 @@ class NonlinearCostModel(TransactionCostModel):
 
     def __init__(
         self,
-        base_cost: float = 0.001,
+        base_cost: float = DEFAULT_TRANSACTION_COST,
         impact_coefficient: float = 0.01,
         impact_exponent: float = 1.5,
         name: str = 'nonlinear'
@@ -223,15 +233,12 @@ class NonlinearCostModel(TransactionCostModel):
         total_cost = 0.0
 
         for trade in trades:
-            trade_value = abs(trade.shares_traded * trade.price)
-
-            # Base proportional cost
+            trade_value = trade.trade_value
             base = trade_value * self.base_cost
 
             # Market impact (increases nonlinearly with trade size)
             if trade.portfolio_value > 0:
-                trade_fraction = trade_value / trade.portfolio_value
-                impact = self.impact_coefficient * (trade_fraction ** self.impact_exponent)
+                impact = self.impact_coefficient * (trade.trade_fraction ** self.impact_exponent)
                 market_impact = trade_value * impact
             else:
                 market_impact = 0.0
@@ -299,11 +306,7 @@ class FixedSlippageModel(SlippageModel):
         **kwargs
     ) -> float:
         """Calculate fixed slippage."""
-        total_slippage = 0.0
-        for trade in trades:
-            trade_value = abs(trade.shares_traded * trade.price)
-            total_slippage += trade_value * self.slippage_rate
-        return total_slippage
+        return sum(trade.trade_value * self.slippage_rate for trade in trades)
 
 
 class VolumeBasedSlippageModel(SlippageModel):
@@ -341,9 +344,6 @@ class VolumeBasedSlippageModel(SlippageModel):
         total_slippage = 0.0
 
         for trade in trades:
-            trade_value = abs(trade.shares_traded * trade.price)
-
-            # Base slippage
             slippage = self.base_slippage
 
             # Add volume impact if daily volume available
@@ -352,7 +352,7 @@ class VolumeBasedSlippageModel(SlippageModel):
                 # Slippage increases with square root of volume ratio
                 slippage += self.volume_impact * np.sqrt(volume_ratio)
 
-            total_slippage += trade_value * slippage
+            total_slippage += trade.trade_value * slippage
 
         return total_slippage
 
@@ -393,8 +393,7 @@ class SpreadBasedSlippageModel(SlippageModel):
 
             # Crossing the spread costs half-spread on average
             # (buy at ask, sell at bid)
-            trade_value = abs(trade.shares_traded * trade.price)
-            total_slippage += trade_value * (spread / 2.0)
+            total_slippage += trade.trade_value * (spread / 2.0)
 
         return total_slippage
 
