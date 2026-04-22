@@ -148,33 +148,26 @@ class WalkForwardBacktestStrategy(BacktestStrategy):
         """
         self.fold_results = []
 
-        # Get environment data length
-        total_steps = len(env.data)
+        total_steps = env.n_steps
 
         histories = []
         start_idx = 0
 
         while start_idx + self.train_window + self.test_window <= total_steps:
-            # Test window starts after train window
             test_start = start_idx + self.train_window
             test_end = test_start + self.test_window
 
-            # Reset environment to test start position
-            env.current_step = test_start
-            obs, info = env.reset()
+            obs, info = env.reset(start_step=test_start)
 
-            # Run backtest on test window
             done = False
             while not done and env.current_step < test_end:
                 action, _states = agent.predict(obs, deterministic=deterministic)
                 obs, reward, terminated, truncated, info = env.step(action)
                 done = terminated or truncated
 
-            # Get history for this fold
             fold_history = env.get_portfolio_history()
             histories.append(fold_history)
 
-            # Store fold metadata
             self.fold_results.append({
                 'train_start': start_idx,
                 'train_end': test_start,
@@ -183,10 +176,8 @@ class WalkForwardBacktestStrategy(BacktestStrategy):
                 'n_steps': len(fold_history)
             })
 
-            # Move to next fold
             start_idx += self.step_size
 
-        # Concatenate all histories
         if histories:
             combined_history = pd.concat(histories, ignore_index=True)
             return combined_history
@@ -206,7 +197,7 @@ class WalkForwardBacktestStrategy(BacktestStrategy):
         """
         self.fold_results = []
 
-        total_steps = len(env.data)
+        total_steps = env.n_steps
         histories = []
         start_idx = 0
 
@@ -214,12 +205,9 @@ class WalkForwardBacktestStrategy(BacktestStrategy):
             test_start = start_idx + self.train_window
             test_end = test_start + self.test_window
 
-            # Reset strategy and environment
             strategy.reset()
-            env.current_step = test_start
-            obs, info = env.reset()
+            obs, info = env.reset(start_step=test_start)
 
-            # Run backtest on test window
             done = False
             step = 0
             while not done and env.current_step < test_end:
@@ -266,10 +254,15 @@ class MonteCarloBacktestStrategy(BacktestStrategy):
 
         Args:
             n_simulations: Number of Monte Carlo simulations
-            seeds: Optional list of random seeds (generated if not provided)
+            seeds: Optional list of random seeds (generated if not provided).
+                Must have at least n_simulations entries when supplied.
         """
         self.n_simulations = n_simulations
-        self.seeds = seeds or list(range(n_simulations))
+        self.seeds = seeds if seeds is not None else list(range(n_simulations))
+        if len(self.seeds) < n_simulations:
+            raise ValueError(
+                f"seeds has {len(self.seeds)} entries but n_simulations={n_simulations}"
+            )
         self.simulation_results = []  # Store all simulation results
 
     def execute_agent(self, agent, env, deterministic: bool = False, **kwargs) -> pd.DataFrame:
@@ -332,7 +325,7 @@ class MonteCarloBacktestStrategy(BacktestStrategy):
         for seed in self.seeds[:self.n_simulations]:
             np.random.seed(seed)
 
-            strategy.reset()
+            strategy.reset(seed=seed)
             obs, info = env.reset(seed=seed)
             done = False
             step = 0
@@ -359,15 +352,23 @@ class MonteCarloBacktestStrategy(BacktestStrategy):
         """
         Aggregate multiple portfolio histories.
 
+        Truncates to the shortest history to handle ragged runs. Only value,
+        return, and date are aggregated — run-dependent columns (weights, cash,
+        transaction_cost) are dropped because their "mean" across simulations
+        is not meaningful.
+
         Args:
             histories: List of portfolio history DataFrames
             method: Aggregation method ('mean', 'median')
 
         Returns:
-            Aggregated portfolio history
+            Aggregated portfolio history with columns: date, value, return
         """
-        # Stack all value columns
-        all_values = np.array([h['value'].values for h in histories])
+        if not histories:
+            raise ValueError("No histories to aggregate")
+
+        min_len = min(len(h) for h in histories)
+        all_values = np.array([h['value'].values[:min_len] for h in histories])
 
         if method == 'mean':
             agg_values = np.mean(all_values, axis=0)
@@ -376,12 +377,14 @@ class MonteCarloBacktestStrategy(BacktestStrategy):
         else:
             raise ValueError(f"Unknown aggregation method: {method}")
 
-        # Create aggregated history using first history as template
-        agg_history = histories[0].copy()
-        agg_history['value'] = agg_values
+        agg_returns = np.concatenate([[0], np.diff(agg_values) / agg_values[:-1]])
 
-        # Recompute returns
-        agg_history['return'] = np.concatenate([[0], np.diff(agg_values) / agg_values[:-1]])
+        agg_history = pd.DataFrame({
+            'value': agg_values,
+            'return': agg_returns,
+        })
+        if 'date' in histories[0].columns:
+            agg_history['date'] = histories[0]['date'].values[:min_len]
 
         return agg_history
 

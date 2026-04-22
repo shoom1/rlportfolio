@@ -2,11 +2,38 @@
 Utilities for visualizing neural network architecture.
 """
 
+import pickle
+
 import torch
 import numpy as np
 from stable_baselines3 import PPO, SAC, A2C
 from pathlib import Path
-from typing import Optional, Union
+from typing import Optional, Tuple, Union
+
+
+_SUPPORTED_ALGOS = (PPO, SAC, A2C)
+_LOAD_ERRORS = (
+    ValueError,
+    RuntimeError,
+    KeyError,
+    FileNotFoundError,
+    AttributeError,
+    TypeError,
+    pickle.UnpicklingError,
+)
+
+
+def _load_any_algo(model_path) -> Tuple[Optional[object], Optional[type]]:
+    """Try to load an SB3 model with each supported algorithm.
+
+    Returns (model, algo_class) or (None, None) if none match.
+    """
+    for algo_class in _SUPPORTED_ALGOS:
+        try:
+            return algo_class.load(model_path), algo_class
+        except _LOAD_ERRORS:
+            continue
+    return None, None
 
 
 def print_network_structure(model_path: str):
@@ -26,19 +53,11 @@ def print_network_structure(model_path: str):
         print(f"Error: Model not found at {model_path}")
         return
 
-    # Try to load as different algorithms
-    model = None
-    for algo_class in [PPO, SAC, A2C]:
-        try:
-            model = algo_class.load(model_path)
-            print(f"\nAlgorithm: {algo_class.__name__}")
-            break
-        except:
-            continue
-
+    model, algo_class = _load_any_algo(model_path)
     if model is None:
         print("Error: Could not load model")
         return
+    print(f"\nAlgorithm: {algo_class.__name__}")
 
     # Print policy network
     print("\n" + "-"*80)
@@ -93,13 +112,10 @@ def print_layer_dimensions(model_path: str):
     print("LAYER DIMENSIONS")
     print("="*80)
 
-    # Load model
-    for algo_class in [PPO, SAC, A2C]:
-        try:
-            model = algo_class.load(model_path)
-            break
-        except:
-            continue
+    model, _ = _load_any_algo(model_path)
+    if model is None:
+        print(f"Error: Could not load model from {model_path}")
+        return
 
     print("\nArchitecture Flow:")
     print("-"*80)
@@ -135,13 +151,10 @@ def visualize_network_graphviz(model_path: str, output_path: str = "network_grap
 
     print(f"\nGenerating network graph...")
 
-    # Load model
-    for algo_class in [PPO, SAC, A2C]:
-        try:
-            model = algo_class.load(model_path)
-            break
-        except:
-            continue
+    model, _ = _load_any_algo(model_path)
+    if model is None:
+        print(f"Error: Could not load model from {model_path}")
+        return
 
     # Create dummy input
     obs_space = model.observation_space
@@ -175,13 +188,10 @@ def create_ascii_diagram(model_path: str):
     print("NETWORK ARCHITECTURE DIAGRAM")
     print("="*80)
 
-    # Load model
-    for algo_class in [PPO, SAC, A2C]:
-        try:
-            model = algo_class.load(model_path)
-            break
-        except:
-            continue
+    model, _ = _load_any_algo(model_path)
+    if model is None:
+        print(f"Error: Could not load model from {model_path}")
+        return
 
     # Get observation and action dimensions
     obs_dim = model.observation_space.shape[0]

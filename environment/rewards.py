@@ -6,6 +6,14 @@ import numpy as np
 from typing import Optional
 from abc import ABC, abstractmethod
 
+from .constants import TRADING_DAYS_PER_YEAR
+
+
+# Sortino is undefined when there is no downside deviation. We return a
+# bounded positive reward proportional to mean_return rather than +inf so
+# on-policy training remains numerically stable.
+SORTINO_NO_DOWNSIDE_MULTIPLIER: float = 10.0
+
 
 class RewardFunction(ABC):
     """Base class for reward functions."""
@@ -79,7 +87,7 @@ class SharpeReward(RewardFunction):
             risk_free_rate: Annual risk-free rate (e.g., 0.02 for 2%)
         """
         self.window = window
-        self.daily_rf_rate = risk_free_rate / 252  # Convert to daily
+        self.daily_rf_rate = risk_free_rate / TRADING_DAYS_PER_YEAR  # Convert to daily
         self.returns_history = []
 
     def compute(
@@ -129,7 +137,7 @@ class SortinoReward(RewardFunction):
             risk_free_rate: Annual risk-free rate
         """
         self.window = window
-        self.daily_rf_rate = risk_free_rate / 252
+        self.daily_rf_rate = risk_free_rate / TRADING_DAYS_PER_YEAR
         self.returns_history = []
 
     def compute(
@@ -164,8 +172,7 @@ class SortinoReward(RewardFunction):
             sortino = mean_return / downside_std
             return sortino
         elif mean_return > 0:
-            # No downside but positive returns
-            return mean_return * 10  # Large positive reward
+            return mean_return * SORTINO_NO_DOWNSIDE_MULTIPLIER
         return 0.0
 
     def reset(self):

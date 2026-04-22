@@ -19,46 +19,29 @@ class MLflowTracker(ExperimentTracker):
     """
     MLflow experiment tracking strategy.
 
-    Integrates with MLflow for experiment tracking, logging metrics, hyperparameters,
-    artifacts, and models.
+    Implements backend hooks; public API, initialization guards, and
+    idempotent finish are handled by ExperimentTracker.
     """
 
     def __init__(self, experiment_name: Optional[str] = None, config: Optional[Dict[str, Any]] = None):
-        """
-        Initialize MLflow tracker.
-
-        Args:
-            experiment_name: Name of the MLflow experiment
-            config: Configuration dictionary to log
-        """
         if not MLFLOW_AVAILABLE:
             raise ImportError(
                 "mlflow is not installed. Install it with: pip install mlflow"
             )
-
         super().__init__(experiment_name, config)
         self.run = None
         self.experiment_id = None
 
-    def initialize(self, **kwargs) -> None:
-        """
-        Initialize MLflow run.
+    def _initialize_backend(self, **kwargs) -> None:
+        """Start an MLflow run.
 
-        Args:
-            **kwargs: MLflow-specific parameters:
-                - tracking_uri: MLflow tracking server URI
-                - experiment_name: MLflow experiment name (overrides self.experiment_name)
-                - run_name: Name for this specific run
-                - tags: Dictionary of tags
-                - description: Run description
-                - nested: Whether this is a nested run
+        Recognized kwargs:
+            tracking_uri, experiment_name, run_name, tags, description, nested.
         """
-        # Set tracking URI if provided
         tracking_uri = kwargs.pop('tracking_uri', None)
         if tracking_uri:
             mlflow.set_tracking_uri(tracking_uri)
 
-        # Get or create experiment
         experiment_name = kwargs.pop('experiment_name', self.experiment_name or 'rl-portfolio')
         try:
             self.experiment_id = mlflow.create_experiment(experiment_name)
@@ -68,110 +51,53 @@ class MLflowTracker(ExperimentTracker):
 
         mlflow.set_experiment(experiment_name)
 
-        # Extract MLflow-specific parameters
         run_name = kwargs.pop('run_name', self.experiment_name)
         tags = kwargs.pop('tags', {})
         description = kwargs.pop('description', None)
         nested = kwargs.pop('nested', False)
 
-        # Start MLflow run
         self.run = mlflow.start_run(
             run_name=run_name,
             tags=tags,
             description=description,
-            nested=nested
+            nested=nested,
         )
 
-        # Log configuration as parameters
         if self.config:
             mlflow.log_params(self._flatten_dict(self.config))
 
-        self.is_initialized = True
+    def _finish_backend(self) -> None:
+        if self.run is not None:
+            mlflow.end_run()
+            self.run = None
 
-    def log_metrics(self, metrics: Dict[str, Any], step: Optional[int] = None) -> None:
-        """
-        Log metrics to MLflow.
-
-        Args:
-            metrics: Dictionary of metric names and values
-            step: Optional step/timestep number
-        """
-        if not self.is_initialized:
-            raise RuntimeError("Tracker not initialized. Call initialize() or use context manager.")
-
+    def _log_metrics_impl(self, metrics: Dict[str, Any], step: Optional[int] = None) -> None:
         for key, value in metrics.items():
             if isinstance(value, (int, float)):
                 mlflow.log_metric(key, value, step=step)
 
-    def log_hyperparameters(self, params: Dict[str, Any]) -> None:
-        """
-        Log hyperparameters to MLflow.
-
-        Args:
-            params: Dictionary of hyperparameters
-        """
-        if not self.is_initialized:
-            raise RuntimeError("Tracker not initialized. Call initialize() or use context manager.")
-
-        # Flatten nested dictionaries and log
+    def _log_hyperparameters_impl(self, params: Dict[str, Any]) -> None:
         flat_params = self._flatten_dict(params)
         mlflow.log_params(flat_params)
 
-    def log_artifact(self, artifact_path: str, artifact_type: Optional[str] = None) -> None:
-        """
-        Log an artifact to MLflow.
-
-        Args:
-            artifact_path: Path to the artifact file or directory
-            artifact_type: Type of artifact (ignored for MLflow, kept for compatibility)
-        """
-        if not self.is_initialized:
-            raise RuntimeError("Tracker not initialized. Call initialize() or use context manager.")
-
+    def _log_artifact_impl(self, artifact_path: str, artifact_type: Optional[str] = None) -> None:
         path = Path(artifact_path)
         if path.is_file():
             mlflow.log_artifact(artifact_path)
         elif path.is_dir():
             mlflow.log_artifacts(artifact_path)
 
-    def log_figure(self, figure_name: str, figure: Any, step: Optional[int] = None) -> None:
-        """
-        Log a matplotlib figure to MLflow.
-
-        Args:
-            figure_name: Name for the figure
-            figure: matplotlib.figure.Figure object
-            step: Optional step number (used in filename if provided)
-        """
-        if not self.is_initialized:
-            raise RuntimeError("Tracker not initialized. Call initialize() or use context manager.")
-
-        # Save figure temporarily and log as artifact
+    def _log_figure_impl(self, figure_name: str, figure: Any, step: Optional[int] = None) -> None:
         import tempfile
-        import matplotlib.pyplot as plt
 
         with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp:
             figure.savefig(tmp.name, format='png', bbox_inches='tight')
             tmp_path = tmp.name
 
-        # Log the figure
         mlflow.log_artifact(tmp_path, artifact_path=f"figures/{figure_name}.png")
-
-        # Clean up
         Path(tmp_path).unlink()
 
-    def log_table(self, table_name: str, dataframe: pd.DataFrame) -> None:
-        """
-        Log a table to MLflow.
-
-        Args:
-            table_name: Name for the table
-            dataframe: pandas DataFrame to log
-        """
-        if not self.is_initialized:
-            raise RuntimeError("Tracker not initialized. Call initialize() or use context manager.")
-
-        # Save as CSV and log as artifact
+    def _log_table_impl(self, table_name: str, dataframe: pd.DataFrame) -> None:
         import tempfile
 
         with tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False) as tmp:
@@ -179,37 +105,27 @@ class MLflowTracker(ExperimentTracker):
             tmp_path = tmp.name
 
         mlflow.log_artifact(tmp_path, artifact_path=f"tables/{table_name}.csv")
-
-        # Clean up
         Path(tmp_path).unlink()
 
-    def finish(self) -> None:
-        """Finish the MLflow run."""
-        if self.is_initialized and self.run is not None:
-            mlflow.end_run()
-            self.run = None
-            self.is_initialized = False
+    # ------------------------------------------------------------------
+    # MLflow-specific extensions
+    # ------------------------------------------------------------------
 
     def log_model(
         self,
         model: Any,
         artifact_path: str = "model",
         registered_model_name: Optional[str] = None,
-        **kwargs
+        **kwargs,
     ) -> None:
         """
         Log a model to MLflow.
 
-        Args:
-            model: Model object (PyTorch, TensorFlow, or sklearn)
-            artifact_path: Path within the run's artifact directory
-            registered_model_name: If provided, register the model with this name
-            **kwargs: Additional arguments passed to the specific log_model function
+        Detects PyTorch, TensorFlow, or sklearn. Fails with a clear error for
+        anything else (the old silent pickle fallback was removed).
         """
-        if not self.is_initialized:
-            raise RuntimeError("Tracker not initialized. Call initialize() or use context manager.")
+        self._require_initialized()
 
-        # Try to detect model type and log appropriately
         try:
             import torch
             if isinstance(model, torch.nn.Module):
@@ -217,7 +133,7 @@ class MLflowTracker(ExperimentTracker):
                     model,
                     artifact_path,
                     registered_model_name=registered_model_name,
-                    **kwargs
+                    **kwargs,
                 )
                 return
         except ImportError:
@@ -230,57 +146,34 @@ class MLflowTracker(ExperimentTracker):
                     model,
                     artifact_path,
                     registered_model_name=registered_model_name,
-                    **kwargs
+                    **kwargs,
                 )
                 return
         except ImportError:
             pass
 
-        # Fallback to sklearn
         try:
             mlflow.sklearn.log_model(
                 model,
                 artifact_path,
                 registered_model_name=registered_model_name,
-                **kwargs
+                **kwargs,
             )
         except Exception as e:
-            # If all else fails, try generic pickling
-            import pickle
-            import tempfile
-
-            with tempfile.NamedTemporaryFile(suffix='.pkl', delete=False) as tmp:
-                pickle.dump(model, tmp)
-                tmp_path = tmp.name
-
-            mlflow.log_artifact(tmp_path, artifact_path=artifact_path)
-            Path(tmp_path).unlink()
+            raise TypeError(
+                f"log_model cannot serialize {type(model).__name__}. "
+                f"Use log_artifact() for SB3 agent zipfiles, or pass agent.policy "
+                f"for the PyTorch path."
+            ) from e
 
     def set_tags(self, tags: Dict[str, Any]) -> None:
-        """
-        Set tags for the current run.
-
-        Args:
-            tags: Dictionary of tags
-        """
-        if not self.is_initialized:
-            raise RuntimeError("Tracker not initialized. Call initialize() or use context manager.")
-
+        """Set tags for the current run."""
+        self._require_initialized()
         mlflow.set_tags(tags)
 
     @staticmethod
     def _flatten_dict(d: Dict[str, Any], parent_key: str = '', sep: str = '.') -> Dict[str, Any]:
-        """
-        Flatten a nested dictionary.
-
-        Args:
-            d: Dictionary to flatten
-            parent_key: Parent key for recursion
-            sep: Separator for nested keys
-
-        Returns:
-            Flattened dictionary
-        """
+        """Flatten a nested dictionary."""
         items = []
         for k, v in d.items():
             new_key = f"{parent_key}{sep}{k}" if parent_key else k

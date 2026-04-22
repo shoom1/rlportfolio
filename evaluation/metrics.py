@@ -8,6 +8,8 @@ import numpy as np
 import pandas as pd
 from typing import Dict, Optional
 
+from environment.constants import TRADING_DAYS_PER_YEAR
+
 
 class BaseMetrics:
     """Base class with common utility methods."""
@@ -68,7 +70,7 @@ class RiskMetrics(BaseMetrics):
             risk_free_rate: Annual risk-free rate (e.g., 0.02 for 2%)
         """
         self.risk_free_rate = risk_free_rate
-        self.daily_rf_rate = risk_free_rate / 252
+        self.daily_rf_rate = risk_free_rate / TRADING_DAYS_PER_YEAR
 
     def calculate(self, returns: np.ndarray, periods_per_year: int = 252) -> Dict[str, float]:
         """
@@ -143,11 +145,15 @@ class DrawdownMetrics(BaseMetrics):
         }
 
     @staticmethod
-    def max_drawdown(values: np.ndarray) -> float:
-        """Calculate maximum drawdown."""
+    def drawdown_series(values: np.ndarray) -> np.ndarray:
+        """Return the drawdown series: (value - running_peak) / running_peak."""
         peak = np.maximum.accumulate(values)
-        drawdown = (values - peak) / peak
-        return np.min(drawdown)
+        return (values - peak) / peak
+
+    @staticmethod
+    def max_drawdown(values: np.ndarray) -> float:
+        """Calculate maximum drawdown (the minimum of the drawdown series)."""
+        return float(np.min(DrawdownMetrics.drawdown_series(values)))
 
     def calmar_ratio(self, values: np.ndarray, n_periods: int, periods_per_year: int = 252) -> float:
         """Calculate Calmar ratio (annualized return / max drawdown)."""

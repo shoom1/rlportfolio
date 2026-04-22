@@ -59,8 +59,10 @@ class ExperimentTrackingCallback(BaseCallback):
             try:
                 params = self.model.get_parameters()
                 self.tracker.log_hyperparameters(params)
-            except Exception:
-                pass  # Skip if parameters can't be extracted
+            except Exception as e:
+                if self.verbose >= 2:
+                    print(f"[ExperimentTrackingCallback] "
+                          f"Could not extract model parameters: {e}")
 
     def _on_step(self) -> bool:
         """
@@ -109,8 +111,10 @@ class ExperimentTrackingCallback(BaseCallback):
                 for ticker, weight in zip(env.tickers, env.weights):
                     metrics[f'portfolio/weight_{ticker}'] = float(weight)
 
-        except (AttributeError, IndexError):
-            pass  # Skip portfolio metrics if not available
+        except (AttributeError, IndexError) as e:
+            if self.verbose >= 2:
+                print(f"[ExperimentTrackingCallback] "
+                      f"Portfolio metrics unavailable: {e}")
 
         # Log learning rate if available
         if hasattr(self.model, 'learning_rate'):
@@ -119,8 +123,10 @@ class ExperimentTrackingCallback(BaseCallback):
                 if callable(lr):
                     lr = lr(1.0)  # Get current LR
                 metrics['train/learning_rate'] = float(lr)
-            except Exception:
-                pass
+            except Exception as e:
+                if self.verbose >= 2:
+                    print(f"[ExperimentTrackingCallback] "
+                          f"Could not read learning rate: {e}")
 
         # Log to tracker
         if metrics:
@@ -175,8 +181,10 @@ class ExperimentTrackingCallback(BaseCallback):
             env = self.training_env.envs[0].unwrapped
             if hasattr(env, 'portfolio_value'):
                 final_metrics['final/portfolio_value'] = env.portfolio_value
-        except (AttributeError, IndexError):
-            pass
+        except (AttributeError, IndexError) as e:
+            if self.verbose >= 2:
+                print(f"[ExperimentTrackingCallback] "
+                      f"Final portfolio value unavailable: {e}")
 
         self.tracker.log_metrics(final_metrics, step=self.num_timesteps)
 

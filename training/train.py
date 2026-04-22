@@ -6,7 +6,6 @@ import os
 import argparse
 from datetime import datetime
 from pathlib import Path
-import yaml
 import numpy as np
 import pandas as pd
 
@@ -29,8 +28,12 @@ from experiments import (
 from evaluation.metrics import PortfolioMetrics
 from evaluation.baselines import BaselineStrategyRegistry
 from evaluation.backtest import run_baseline_backtest
+from training.config import TrainingConfig
 
-from typing import Optional
+from typing import Any, Dict, Optional
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
 class PortfolioTrainer:
@@ -65,74 +68,49 @@ class PortfolioTrainer:
         self,
         config_path: Optional[str] = None,
         tracker: Optional[ExperimentTracker] = None,
-        experiment_name: Optional[str] = None
+        experiment_name: Optional[str] = None,
+        config: Optional[Dict[str, Any]] = None,
+        cfg: Optional[TrainingConfig] = None,
+        data_fetcher: Optional[DataFetcher] = None,
+        feature_engineer: Optional[FeatureEngineer] = None,
     ):
         """
         Initialize trainer with configuration.
 
-        Args:
-            config_path: Path to YAML configuration file
-            tracker: ExperimentTracker instance (W&B, MLflow, Mock, etc.)
-                    If None, uses MockTracker (no logging)
-            experiment_name: Custom experiment name
-        """
-        if config_path and os.path.exists(config_path):
-            with open(config_path, 'r') as f:
-                self.config = yaml.safe_load(f)
-        else:
-            self.config = self._default_config()
+        Precedence for config sources: cfg > config > config_path > defaults.
 
-        self.data_fetcher = DataFetcher()
-        self.feature_engineer = FeatureEngineer()
+        Args:
+            config_path: Path to YAML configuration file.
+            tracker: ExperimentTracker instance (W&B, MLflow, Mock, etc.)
+                    If None, uses MockTracker (no logging).
+            experiment_name: Custom experiment name.
+            config: Pre-built config dict. Validated via TrainingConfig.from_dict.
+            cfg: Pre-built TrainingConfig. Bypasses loading/validation.
+            data_fetcher: Inject a fetcher (for tests). Defaults to DataFetcher().
+            feature_engineer: Inject an engineer (for tests). Defaults to FeatureEngineer().
+        """
+        if cfg is not None:
+            self.cfg = cfg
+        elif config is not None:
+            self.cfg = TrainingConfig.from_dict(config)
+        elif config_path and os.path.exists(config_path):
+            self.cfg = TrainingConfig.from_yaml(config_path)
+        else:
+            self.cfg = TrainingConfig()
+
+        self.data_fetcher = data_fetcher if data_fetcher is not None else DataFetcher()
+        self.feature_engineer = (
+            feature_engineer if feature_engineer is not None else FeatureEngineer()
+        )
 
         # Experiment tracking
         self.experiment_name = experiment_name or f"exp_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         self.tracker = tracker or MockTracker(self.experiment_name, config=self.config)
 
-    def _default_config(self) -> dict:
-        """Return default configuration."""
-        return {
-            'data': {
-                'tickers': ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'NVDA'],
-                'train_days': 730,  # 2 years
-                'val_days': 180,    # 6 months
-                'source': 'yfinance'
-            },
-            'environment': {
-                'initial_balance': 10000.0,
-                'transaction_cost': 0.001,
-                'window_size': 20,
-                'reward_function': 'sharpe',
-                'reward_params': {
-                    'window': 30,
-                    'risk_free_rate': 0.02
-                }
-            },
-            'agent': {
-                'algorithm': 'PPO',
-                'policy': 'MlpPolicy',
-                'learning_rate': 0.0003,
-                'n_steps': 2048,
-                'batch_size': 64,
-                'n_epochs': 10,
-                'gamma': 0.99,
-                'gae_lambda': 0.95,
-                'clip_range': 0.2,
-                'ent_coef': 0.01,
-                'vf_coef': 0.5,
-                'max_grad_norm': 0.5,
-                'policy_kwargs': {
-                    'net_arch': [256, 256, 128]
-                }
-            },
-            'training': {
-                'total_timesteps': 100000,
-                'eval_freq': 5000,
-                'save_freq': 10000,
-                'log_dir': 'logs',
-                'model_dir': 'training/models'
-            }
-        }
+    @property
+    def config(self) -> Dict[str, Any]:
+        """Dict view of the typed config (for trackers, tests, and logging)."""
+        return self.cfg.to_dict()
 
     def prepare_data(self, train: bool = True) -> pd.DataFrame:
         """
@@ -144,12 +122,11 @@ class PortfolioTrainer:
         Returns:
             Processed DataFrame ready for environment
         """
-        tickers = self.config['data']['tickers']
-        days = self.config['data']['train_days'] if train else self.config['data']['val_days']
-        source = self.config['data']['source']
+        tickers = self.cfg.data.tickers
+        days = self.cfg.data.train_days if train else self.cfg.data.val_days
 
         print(f"Fetching {'training' if train else 'validation'} data...")
-        data = self.data_fetcher.get_latest_data(tickers, days=days, source=source)
+        data = self.data_fetcher.get_latest_data(tickers, days=days)
 
         print("Computing features...")
         features_data = self.feature_engineer.compute_features(data)
@@ -170,23 +147,24 @@ class PortfolioTrainer:
         Returns:
             Portfolio environment
         """
-        tickers = self.config['data']['tickers']
+        tickers = self.cfg.data.tickers
         feature_cols = self.feature_engineer.create_observation_columns(normalize=True)
 
         # Create reward function
-        reward_fn_name = self.config['environment']['reward_function']
-        reward_params = self.config['environment'].get('reward_params', {})
-        reward_function = RewardFunctionFactory.create(reward_fn_name, **reward_params)
+        reward_function = RewardFunctionFactory.create(
+            self.cfg.environment.reward_function,
+            **self.cfg.environment.reward_params,
+        )
 
         # Create environment
         env = PortfolioEnv(
             data=data,
             feature_columns=feature_cols,
             tickers=tickers,
-            initial_balance=self.config['environment']['initial_balance'],
-            transaction_cost=self.config['environment']['transaction_cost'],
+            initial_balance=self.cfg.environment.initial_balance,
+            transaction_cost=self.cfg.environment.transaction_cost,
             reward_function=reward_function,
-            window_size=self.config['environment']['window_size']
+            window_size=self.cfg.environment.window_size,
         )
 
         # Wrap with Monitor
@@ -207,8 +185,8 @@ class PortfolioTrainer:
         val_data = self.prepare_data(train=False)
 
         # Create directories
-        log_dir = Path(self.config['training']['log_dir'])
-        model_dir = Path(self.config['training']['model_dir'])
+        log_dir = Path(self.cfg.training.log_dir)
+        model_dir = Path(self.cfg.training.model_dir)
         log_dir.mkdir(parents=True, exist_ok=True)
         model_dir.mkdir(parents=True, exist_ok=True)
 
@@ -218,16 +196,17 @@ class PortfolioTrainer:
         eval_env = self.create_environment(val_data, monitor_path=str(log_dir / "eval"))
 
         # Create agent
-        algorithm = self.config['agent']['algorithm']
+        algorithm = self.cfg.agent.algorithm
         print(f"Creating {algorithm} agent...")
 
         agent_class = self._get_algorithm_class(algorithm)
 
-        # Prepare agent kwargs
-        agent_kwargs = {
-            'policy': self.config['agent']['policy'],
+        # Prepare agent kwargs — pass all algorithm-specific kwargs through.
+        agent_kwargs: Dict[str, Any] = {
+            'policy': self.cfg.agent.policy,
             'env': train_env,
             'verbose': 1,
+            **self.cfg.agent.extra,
         }
 
         # Only add tensorboard if it's installed
@@ -236,15 +215,6 @@ class PortfolioTrainer:
             agent_kwargs['tensorboard_log'] = str(log_dir / 'tensorboard')
         except ImportError:
             print("Note: tensorboard not installed. Tensorboard logging disabled.")
-
-        # Add algorithm-specific parameters
-        for key in ['learning_rate', 'n_steps', 'batch_size', 'n_epochs', 'gamma',
-                    'gae_lambda', 'clip_range', 'ent_coef', 'vf_coef', 'max_grad_norm']:
-            if key in self.config['agent']:
-                agent_kwargs[key] = self.config['agent'][key]
-
-        if 'policy_kwargs' in self.config['agent']:
-            agent_kwargs['policy_kwargs'] = self.config['agent']['policy_kwargs']
 
         # Create or load agent
         if resume_path and os.path.exists(resume_path):
@@ -255,7 +225,7 @@ class PortfolioTrainer:
 
         # Setup callbacks
         checkpoint_callback = CheckpointCallback(
-            save_freq=self.config['training']['save_freq'],
+            save_freq=self.cfg.training.save_freq,
             save_path=str(model_dir),
             name_prefix='portfolio_agent'
         )
@@ -264,7 +234,7 @@ class PortfolioTrainer:
             eval_env,
             best_model_save_path=str(model_dir / 'best'),
             log_path=str(log_dir / 'eval'),
-            eval_freq=self.config['training']['eval_freq'],
+            eval_freq=self.cfg.training.eval_freq,
             deterministic=True,
             render=False
         )
@@ -281,10 +251,10 @@ class PortfolioTrainer:
         callbacks = [checkpoint_callback, eval_callback, tracking_callback]
 
         # Train with context manager for tracking
-        print(f"\nStarting training for {self.config['training']['total_timesteps']} timesteps...")
+        print(f"\nStarting training for {self.cfg.training.total_timesteps} timesteps...")
 
         # Determine tracker init kwargs based on tracker type
-        tracker_init_kwargs = {}
+        tracker_init_kwargs: Dict[str, Any] = {}
         if isinstance(self.tracker, WandbTracker):
             tracker_init_kwargs = {
                 'project': 'rl-portfolio',
@@ -295,8 +265,8 @@ class PortfolioTrainer:
                 'run_name': self.experiment_name,
                 'tags': {
                     'algorithm': algorithm,
-                    'tickers': ','.join(self.config['data']['tickers'])
-                }
+                    'tickers': ','.join(self.cfg.data.tickers),
+                },
             }
 
         with self.tracker.track(**tracker_init_kwargs):
@@ -305,7 +275,7 @@ class PortfolioTrainer:
 
             # Train
             agent.learn(
-                total_timesteps=self.config['training']['total_timesteps'],
+                total_timesteps=self.cfg.training.total_timesteps,
                 callback=callbacks,
                 progress_bar=True
             )
@@ -335,7 +305,7 @@ class PortfolioTrainer:
         eval_env = self.create_environment(val_data)
 
         # Load model
-        algorithm = self.config['agent']['algorithm']
+        algorithm = self.cfg.agent.algorithm
         agent_class = self._get_algorithm_class(algorithm)
 
         print(f"Loading model from: {model_path}")

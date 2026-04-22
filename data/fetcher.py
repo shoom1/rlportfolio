@@ -11,8 +11,13 @@ from finbase import DataClient
 class DataFetcher:
     """Fetches historical market data via finbase."""
 
-    def __init__(self):
-        self.client = DataClient()
+    def __init__(self, client: Optional[DataClient] = None):
+        """Use the supplied client or build a fresh finbase.DataClient.
+
+        Injecting the client keeps tests from touching the real SQLite
+        backing store.
+        """
+        self.client = client if client is not None else DataClient()
 
     def fetch_data(
         self,

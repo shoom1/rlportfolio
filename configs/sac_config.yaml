@@ -11,7 +11,6 @@ data:
     - VNQ    # Real Estate
   train_days: 1095       # 3 years
   val_days: 365          # 1 year
-  source: yfinance
 
 # Environment configuration
 environment:

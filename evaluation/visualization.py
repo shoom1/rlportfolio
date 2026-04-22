@@ -9,6 +9,8 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from typing import Dict, List, Optional, Union
 
+from .metrics import DrawdownMetrics
+
 
 def plot_strategy_comparison(
     results: Dict[str, pd.DataFrame],
@@ -37,9 +39,7 @@ def plot_strategy_comparison(
     # 2. Drawdown
     ax = axes[0, 1]
     for name, history in results.items():
-        values = history['value'].values
-        peak = np.maximum.accumulate(values)
-        drawdown = (values - peak) / peak
+        drawdown = DrawdownMetrics.drawdown_series(history['value'].values)
         ax.plot(history['date'], drawdown * 100, label=name, linewidth=2)
     ax.set_xlabel('Date')
     ax.set_ylabel('Drawdown (%)')

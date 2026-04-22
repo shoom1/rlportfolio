@@ -4,12 +4,18 @@ Works alongside W&B for comprehensive experiment tracking.
 """
 
 import json
+import re
 import sqlite3
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 import pandas as pd
 import numpy as np
+
+from environment.constants import DEFAULT_INITIAL_BALANCE, DEFAULT_TRANSACTION_COST
+
+
+_EXPERIMENT_ID_RE = re.compile(r'^[A-Za-z0-9_\-]+$')
 
 
 class PortfolioExperiment:
@@ -44,8 +50,8 @@ class PortfolioExperiment:
         # Portfolio-specific configuration
         self.portfolio_config = {
             'tickers': [],
-            'initial_balance': 10000.0,
-            'transaction_cost': 0.001,
+            'initial_balance': DEFAULT_INITIAL_BALANCE,
+            'transaction_cost': DEFAULT_TRANSACTION_COST,
             'reward_function': None
         }
 
@@ -178,6 +184,24 @@ class PortfolioExperimentTracker:
         # Current experiment
         self.current_experiment: Optional[PortfolioExperiment] = None
 
+    def _safe_experiment_path(self, experiment_id: str, suffix: str) -> Path:
+        """Build a path inside storage_dir, rejecting IDs that could escape it.
+
+        Why: experiment_id flows in from user-facing CLI args and external
+        caller lists; concatenating it directly into a filesystem path would
+        allow `../../etc/passwd`-style reads or deletes.
+        """
+        if not isinstance(experiment_id, str) or not _EXPERIMENT_ID_RE.match(experiment_id):
+            raise ValueError(
+                f"Invalid experiment_id: {experiment_id!r}. "
+                f"Must match {_EXPERIMENT_ID_RE.pattern}."
+            )
+        path = (self.storage_dir / f"{experiment_id}{suffix}").resolve()
+        storage_root = self.storage_dir.resolve()
+        if storage_root != path.parent and storage_root not in path.parents:
+            raise ValueError(f"Path escapes storage_dir: {path}")
+        return path
+
     def _init_database(self):
         """Initialize SQLite database."""
         conn = sqlite3.connect(self.db_path)
@@ -286,18 +310,18 @@ class PortfolioExperimentTracker:
         conn.close()
 
         # Save detailed JSON
-        json_path = self.storage_dir / f"{experiment.experiment_id}.json"
+        json_path = self._safe_experiment_path(experiment.experiment_id, ".json")
         with open(json_path, 'w') as f:
             json.dump(experiment.to_dict(), f, indent=2, default=str)
 
         # Save portfolio history if available
         if experiment.portfolio_history is not None:
-            csv_path = self.storage_dir / f"{experiment.experiment_id}_history.csv"
+            csv_path = self._safe_experiment_path(experiment.experiment_id, "_history.csv")
             experiment.portfolio_history.to_csv(csv_path)
 
     def load_experiment(self, experiment_id: str) -> PortfolioExperiment:
         """Load experiment from storage."""
-        json_path = self.storage_dir / f"{experiment_id}.json"
+        json_path = self._safe_experiment_path(experiment_id, ".json")
 
         if not json_path.exists():
             raise ValueError(f"Experiment {experiment_id} not found")
@@ -308,7 +332,7 @@ class PortfolioExperimentTracker:
         experiment = PortfolioExperiment.from_dict(data)
 
         # Load portfolio history if available
-        csv_path = self.storage_dir / f"{experiment_id}_history.csv"
+        csv_path = self._safe_experiment_path(experiment_id, "_history.csv")
         if csv_path.exists():
             experiment.portfolio_history = pd.read_csv(csv_path)
 
@@ -411,6 +435,9 @@ class PortfolioExperimentTracker:
 
     def delete_experiment(self, experiment_id: str):
         """Delete experiment."""
+        json_path = self._safe_experiment_path(experiment_id, ".json")
+        csv_path = self._safe_experiment_path(experiment_id, "_history.csv")
+
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
 
@@ -420,10 +447,6 @@ class PortfolioExperimentTracker:
 
         conn.commit()
         conn.close()
-
-        # Delete files
-        json_path = self.storage_dir / f"{experiment_id}.json"
-        csv_path = self.storage_dir / f"{experiment_id}_history.csv"
 
         if json_path.exists():
             json_path.unlink()

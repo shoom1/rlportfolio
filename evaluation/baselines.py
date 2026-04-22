@@ -6,6 +6,8 @@ import numpy as np
 from abc import ABC, abstractmethod
 from typing import Dict
 
+from environment.constants import CASH_SOFTMAX_BIAS, LOG_EPSILON
+
 
 class BaselineStrategy(ABC):
     """Base class for baseline portfolio strategies."""
@@ -28,15 +30,19 @@ class BaselineStrategy(ABC):
         """
         pass
 
-    def reset(self):
-        """Reset strategy state if needed."""
+    def reset(self, seed: int = None):
+        """Reset strategy state if needed.
+
+        Args:
+            seed: Optional seed for stochastic strategies. No-op for deterministic ones.
+        """
         pass
 
 
 class EqualWeightStrategy(BaselineStrategy):
     """Equal weight portfolio, rebalanced every step."""
 
-    def __init__(self, cash_weight: float = -5.0):
+    def __init__(self, cash_weight: float = CASH_SOFTMAX_BIAS):
         """
         Initialize equal weight strategy.
 
@@ -58,7 +64,7 @@ class EqualWeightStrategy(BaselineStrategy):
 class BuyAndHoldStrategy(BaselineStrategy):
     """Buy and hold strategy - equal weights at start, no rebalancing."""
 
-    def __init__(self, cash_weight: float = -5.0):
+    def __init__(self, cash_weight: float = CASH_SOFTMAX_BIAS):
         """
         Initialize buy and hold strategy.
 
@@ -79,13 +85,13 @@ class BuyAndHoldStrategy(BaselineStrategy):
             return action
         else:
             # Return inverse softmax of current weights to maintain them
-            asset_weights = np.log(env.weights + 1e-8)
+            asset_weights = np.log(env.weights + LOG_EPSILON)
             # Maintain cash ratio as well
             cash_ratio = env.cash / env.portfolio_value if env.portfolio_value > 0 else 0.0
-            cash_log_weight = np.log(cash_ratio + 1e-8)
+            cash_log_weight = np.log(cash_ratio + LOG_EPSILON)
             return np.append(asset_weights, cash_log_weight)
 
-    def reset(self):
+    def reset(self, seed: int = None):
         """Reset first step flag."""
         self.first_step = True
 
@@ -95,6 +101,7 @@ class RandomStrategy(BaselineStrategy):
 
     def __init__(self, seed: int = None):
         super().__init__('random')
+        self._initial_seed = seed
         self.rng = np.random.RandomState(seed)
 
     def get_action(self, env, step: int, **kwargs) -> np.ndarray:
@@ -102,15 +109,16 @@ class RandomStrategy(BaselineStrategy):
         # Random weights for assets + cash
         return self.rng.randn(env.n_assets + 1)
 
-    def reset(self):
-        """No state to reset."""
-        pass
+    def reset(self, seed: int = None):
+        """Re-seed the RNG so Monte Carlo simulations differ across runs."""
+        effective_seed = seed if seed is not None else self._initial_seed
+        self.rng = np.random.RandomState(effective_seed)
 
 
 class MomentumStrategy(BaselineStrategy):
     """Momentum strategy - weight by recent returns."""
 
-    def __init__(self, lookback: int = 20, cash_weight: float = -5.0):
+    def __init__(self, lookback: int = 20, cash_weight: float = CASH_SOFTMAX_BIAS):
         """
         Initialize momentum strategy.
 
@@ -156,7 +164,7 @@ class MomentumStrategy(BaselineStrategy):
 class MinimumVarianceStrategy(BaselineStrategy):
     """Minimum variance portfolio based on historical covariance."""
 
-    def __init__(self, lookback: int = 60, cash_weight: float = -5.0):
+    def __init__(self, lookback: int = 60, cash_weight: float = CASH_SOFTMAX_BIAS):
         """
         Initialize minimum variance strategy.
 
@@ -197,7 +205,7 @@ class MinimumVarianceStrategy(BaselineStrategy):
             weights = weights / np.sum(weights)
 
             # Convert to action (log for softmax) and add cash dimension
-            asset_action = np.log(weights + 1e-8)
+            asset_action = np.log(weights + LOG_EPSILON)
             return np.append(asset_action, self.cash_weight)
         except np.linalg.LinAlgError:
             # If singular, fall back to equal weight
@@ -209,7 +217,7 @@ class MinimumVarianceStrategy(BaselineStrategy):
 class InverseVolatilityStrategy(BaselineStrategy):
     """Inverse volatility weighting."""
 
-    def __init__(self, lookback: int = 30, cash_weight: float = -5.0):
+    def __init__(self, lookback: int = 30, cash_weight: float = CASH_SOFTMAX_BIAS):
         """
         Initialize inverse volatility strategy.
 
@@ -245,7 +253,7 @@ class InverseVolatilityStrategy(BaselineStrategy):
         volatilities = np.array(volatilities)
 
         # Inverse volatility weights
-        inv_vol = 1.0 / (volatilities + 1e-8)
+        inv_vol = 1.0 / (volatilities + LOG_EPSILON)
 
         # Add cash dimension
         return np.append(inv_vol, self.cash_weight)

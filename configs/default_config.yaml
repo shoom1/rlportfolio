@@ -10,7 +10,6 @@ data:
     - NVDA
   train_days: 730        # 2 years of training data
   val_days: 180          # 6 months of validation data
-  source: yfinance        # yfinance or polygon
 
 # Environment configuration
 environment:
