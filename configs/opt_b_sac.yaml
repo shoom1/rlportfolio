@@ -1,0 +1,44 @@
+# Option B: PPO vs SAC vs A2C — SAC arm.
+# Shares data/environment/training with opt_b_ppo.yaml.
+
+data:
+  tickers:
+    - AAPL
+    - MSFT
+    - GOOGL
+    - AMZN
+    - NVDA
+  train_days: 1460
+  val_days: 365
+
+environment:
+  initial_balance: 10000.0
+  transaction_cost: 0.001
+  window_size: 20
+  reward_function: sharpe
+  reward_params:
+    window: 30
+    risk_free_rate: 0.02
+
+agent:
+  algorithm: SAC
+  policy: MlpPolicy
+  learning_rate: 0.0003
+  buffer_size: 100000
+  learning_starts: 1000
+  batch_size: 256
+  tau: 0.005
+  gamma: 0.99
+  train_freq: 1
+  gradient_steps: 1
+  ent_coef: auto
+  target_update_interval: 1
+  policy_kwargs:
+    net_arch: [256, 256]
+
+training:
+  total_timesteps: 50000
+  eval_freq: 5000
+  save_freq: 10000
+  log_dir: logs/opt_b_sac
+  model_dir: training/models/opt_b_sac

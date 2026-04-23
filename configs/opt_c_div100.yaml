@@ -1,0 +1,150 @@
+# Step 2: 100-ticker sector-balanced universe, 50k PPO timesteps.
+# Vanilla MlpPolicy may not scale — this is the empirical test.
+
+data:
+  tickers:
+    # Tech (25)
+    - AAPL
+    - MSFT
+    - NVDA
+    - GOOGL
+    - AMZN
+    - META
+    - AVGO
+    - ORCL
+    - CRM
+    - ADBE
+    - AMD
+    - CSCO
+    - QCOM
+    - INTC
+    - IBM
+    - INTU
+    - NOW
+    - TXN
+    - AMAT
+    - ISRG
+    - MU
+    - KLAC
+    - ADI
+    - PANW
+    - CDNS
+    # Financials (14)
+    - JPM
+    - BAC
+    - WFC
+    - C
+    - GS
+    - MS
+    - AXP
+    - SPGI
+    - BLK
+    - SCHW
+    - MMC
+    - PGR
+    - CB
+    - COF
+    # Healthcare (18)
+    - LLY
+    - UNH
+    - JNJ
+    - ABBV
+    - MRK
+    - TMO
+    - ABT
+    - PFE
+    - AMGN
+    - DHR
+    - GILD
+    - CI
+    - ELV
+    - SYK
+    - MDT
+    - REGN
+    - VRTX
+    - BMY
+    # Consumer Discretionary (10)
+    - TSLA
+    - HD
+    - MCD
+    - NFLX
+    - SBUX
+    - LOW
+    - BKNG
+    - NKE
+    - TJX
+    - TGT
+    # Consumer Staples (8)
+    - WMT
+    - PG
+    - KO
+    - PEP
+    - COST
+    - PM
+    - MDLZ
+    - CL
+    # Energy (3)
+    - XOM
+    - CVX
+    - COP
+    # Industrials (11)
+    - CAT
+    - HON
+    - UNP
+    - BA
+    - GE
+    - RTX
+    - LMT
+    - DE
+    - UBER
+    - ETN
+    - ADP
+    # Materials (2)
+    - LIN
+    - APD
+    # Communication Services (4)
+    - DIS
+    - VZ
+    - T
+    - CMCSA
+    # Utilities (2)
+    - NEE
+    - DUK
+    # Real Estate (3)
+    - PLD
+    - AMT
+    - SPG
+  train_days: 1460
+  val_days: 365
+
+environment:
+  initial_balance: 10000.0
+  transaction_cost: 0.001
+  window_size: 20
+  reward_function: sharpe
+  reward_params:
+    window: 30
+    risk_free_rate: 0.02
+
+agent:
+  algorithm: PPO
+  policy: MlpPolicy
+  learning_rate: 0.0003
+  n_steps: 2048
+  batch_size: 64
+  n_epochs: 10
+  gamma: 0.99
+  gae_lambda: 0.95
+  clip_range: 0.2
+  ent_coef: 0.01
+  vf_coef: 0.5
+  max_grad_norm: 0.5
+  policy_kwargs:
+    net_arch: [256, 256]
+
+training:
+  total_timesteps: 50000
+  eval_freq: 5000
+  save_freq: 10000
+  log_dir: logs/opt_c_div100
+  model_dir: training/models/opt_c_div100
