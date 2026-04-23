@@ -132,7 +132,7 @@ plot_strategy_comparison(histories, save_path='results/comparison.png')
 ```
 rlportfolio/
 ├── data/                   # Data fetching and feature engineering
-│   ├── fetcher.py         # yfinance/Polygon data fetcher
+│   ├── fetcher.py         # Thin adapter around finbase.DataClient
 │   └── features.py        # Technical indicators with registry pattern
 ├── environment/           # Custom Gym environment
 │   ├── portfolio_env.py   # Multi-asset portfolio environment
@@ -159,7 +159,9 @@ rlportfolio/
 
 ### Data Pipeline
 
-1. **DataFetcher**: Downloads and caches historical OHLCV data from yfinance or Polygon
+1. **DataFetcher**: Thin adapter over `finbase.DataClient`, which reads from a
+   shared SQLite database at `~/.finbase/timeseries.db`. Data is populated and
+   refreshed by the `finbase` project — this repo only reads it.
 2. **FeatureEngineer**: Computes technical indicators using a registry pattern for extensibility
 3. Features are normalized and prepared for the RL environment
 
@@ -261,15 +263,12 @@ backtester.baseline_registry.register(MyStrategy())
 
 ## Data Sources
 
-### yfinance (Default)
-- Free, no API key required
-- Daily data for stocks and ETFs
-- Occasional data gaps
+Market data is sourced through **`finbase.DataClient`**, a shared SQLite-backed
+client used across the FinAI projects. The local database lives at
+`~/.finbase/timeseries.db`. Populating and refreshing that database is the
+responsibility of the `finbase` package; this repo is a read-only consumer.
 
-### Polygon.io
-- Free tier: API key required (set `POLYGON_API_KEY` environment variable)
-- Higher quality data
-- Intraday support
+See `data/fetcher.py` for the thin adapter layer.
 
 ## Results
 
@@ -297,4 +296,4 @@ MIT License
 
 - Built with [Stable-Baselines3](https://github.com/DLR-RM/stable-baselines3)
 - Technical indicators from [pandas-ta](https://github.com/twopirllc/pandas-ta)
-- Market data from [yfinance](https://github.com/ranaroussi/yfinance)
+- Market data via the internal `finbase` SQLite client
