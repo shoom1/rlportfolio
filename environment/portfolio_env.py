@@ -92,6 +92,12 @@ class PortfolioEnv(gym.Env):
         # Validate data
         self._validate_data()
 
+        # Precompute dense (n_dates, n_tickers, n_features) and (n_dates,
+        # n_tickers) arrays so the hot path never touches pandas MultiIndex
+        # lookups. Profiling showed xs() + datetime parsing was ~96% of the
+        # per-step cost at 4 fps.
+        self._precompute_arrays()
+
         # Define action space: portfolio weights including cash (continuous, will be normalized)
         # Using Box with finite bounds (will be passed through softmax)
         # Range [-10, 10] is sufficient for softmax input
@@ -137,6 +143,37 @@ class PortfolioEnv(gym.Env):
         for col in self.feature_columns:
             if col not in self.data.columns:
                 raise ValueError(f"Feature column {col} not found in data")
+
+    def _precompute_arrays(self):
+        """Materialise the data into dense numpy cubes indexed by
+        (date_idx, ticker_idx, ...), so step-time feature/price lookups are
+        O(1) slices instead of pandas MultiIndex xs() calls.
+
+        Behavioural equivalence with the previous xs()-based path:
+          - Features: missing (date, ticker) rows fill with 0 (the old
+            KeyError branch did the same).
+          - Prices: forward-filled per ticker so a missing row falls back to
+            the most recent known price (the old recursive previous-step
+            fallback). Leading NaN is left as-is; _get_prices raises on it,
+            matching the old step-0 ValueError.
+        """
+        index = pd.MultiIndex.from_product(
+            [self.dates, self.tickers], names=['date', 'ticker']
+        )
+
+        feat_df = self.data[self.feature_columns].reindex(index).fillna(0.0)
+        self._feature_array = (
+            feat_df.to_numpy(dtype=np.float32, copy=False)
+            .reshape(len(self.dates), self.n_assets, len(self.feature_columns))
+        )
+
+        close = self.data[['close']].reindex(index)
+        close = close.groupby(level='ticker').ffill()
+        self._price_array = (
+            close['close']
+            .to_numpy(dtype=np.float32, copy=False)
+            .reshape(len(self.dates), self.n_assets)
+        )
 
     def reset(
         self,
@@ -337,45 +374,23 @@ class PortfolioEnv(gym.Env):
         return total_cost
 
     def _get_observation(self) -> np.ndarray:
-        """Get current observation."""
-        # Get market features for the window
-        features_list = []
-        for i in range(self.window_size):
-            step_idx = self.current_step + i
-            date = self.dates[step_idx]
+        """Get current observation.
 
-            for ticker in self.tickers:
-                try:
-                    ticker_data = self.data.xs((date, ticker), level=('date', 'ticker'))
-                    # Get only the requested feature columns, fill missing with 0
-                    features = []
-                    for col in self.feature_columns:
-                        if col in ticker_data.index:
-                            features.append(ticker_data[col])
-                        else:
-                            features.append(0.0)
-                    features = np.array(features, dtype=np.float32)
-                except KeyError:
-                    # If data missing, use zeros
-                    features = np.zeros(len(self.feature_columns), dtype=np.float32)
+        Hot path — must not touch pandas MultiIndex. Reads a contiguous
+        slice of the precomputed feature cube and appends portfolio state.
+        """
+        start = self.current_step
+        end = start + self.window_size
+        market_features = self._feature_array[start:end].reshape(-1)
 
-                # Ensure 1D
-                features = features.flatten()
-                features_list.append(features)
+        weights_flat = (
+            self.weights.flatten() if self.weights.ndim > 1 else self.weights
+        )
+        cash_ratio = np.array(
+            [self.cash / self.portfolio_value if self.portfolio_value > 0 else 1.0]
+        )
+        portfolio_state = np.concatenate([weights_flat, cash_ratio])
 
-        # Flatten all features into single 1D array
-        market_features = np.concatenate(features_list)
-
-        # Add current portfolio state
-        weights_flat = self.weights.flatten() if self.weights.ndim > 1 else self.weights
-        cash_ratio = np.array([self.cash / self.portfolio_value if self.portfolio_value > 0 else 1.0])
-
-        portfolio_state = np.concatenate([
-            weights_flat,  # Current weights
-            cash_ratio  # Cash ratio
-        ])
-
-        # Combine all observations
         observation = np.concatenate([market_features, portfolio_state]).astype(np.float32)
 
         # Handle NaN/Inf values
@@ -384,36 +399,22 @@ class PortfolioEnv(gym.Env):
         return observation
 
     def _get_prices(self, step: int) -> np.ndarray:
-        """Get asset prices at given step."""
-        date = self.dates[self.window_size + step]
-        prices = []
+        """Get asset prices at the given step.
 
-        for ticker in self.tickers:
-            try:
-                ticker_data = self.data.xs((date, ticker), level=('date', 'ticker'))
-                price = ticker_data['close']
-                # Ensure scalar value (not Series or array)
-                if hasattr(price, 'item'):
-                    price = price.item()
-                elif hasattr(price, '__iter__') and not isinstance(price, str):
-                    price = float(price[0]) if len(price) > 0 else 100.0
-                else:
-                    price = float(price)
-            except KeyError:
-                # Fall back to the previous step's price for sparse data;
-                # on step 0 we have nothing to fall back to, so fail loudly
-                # rather than silently inventing a price.
-                if step > 0:
-                    price = self._get_prices(step - 1)[self.tickers.index(ticker)]
-                else:
-                    raise ValueError(
-                        f"Missing price for {ticker} at {date} (step 0). "
-                        f"Ensure data is forward-filled before constructing the env."
-                    )
-
-            prices.append(price)
-
-        return np.array(prices, dtype=np.float32).flatten()
+        Reads from the precomputed, per-ticker forward-filled price array.
+        Leading NaN (no prior price to fall back to) raises, matching the
+        previous step-0 ValueError behavior.
+        """
+        date_idx = self.window_size + step
+        prices = self._price_array[date_idx]
+        if np.any(np.isnan(prices)):
+            missing = [t for t, p in zip(self.tickers, prices) if np.isnan(p)]
+            date = self.dates[date_idx]
+            raise ValueError(
+                f"Missing price for {missing} at {date} (step {step}). "
+                f"Ensure data is forward-filled before constructing the env."
+            )
+        return prices
 
     def _get_info(self) -> Dict[str, Any]:
         """Get additional info."""
