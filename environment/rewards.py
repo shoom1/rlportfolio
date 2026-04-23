@@ -2,6 +2,8 @@
 Reward function implementations for portfolio optimization.
 """
 
+from collections import deque
+
 import numpy as np
 from typing import Optional
 from abc import ABC, abstractmethod
@@ -88,7 +90,7 @@ class SharpeReward(RewardFunction):
         """
         self.window = window
         self.daily_rf_rate = risk_free_rate / TRADING_DAYS_PER_YEAR  # Convert to daily
-        self.returns_history = []
+        self.returns_history = deque(maxlen=window)
 
     def compute(
         self,
@@ -99,10 +101,6 @@ class SharpeReward(RewardFunction):
     ) -> float:
         """Compute Sharpe ratio over rolling window."""
         self.returns_history.append(portfolio_return)
-
-        # Keep only recent window
-        if len(self.returns_history) > self.window:
-            self.returns_history.pop(0)
 
         # Need sufficient history
         if len(self.returns_history) < 2:
@@ -122,7 +120,7 @@ class SharpeReward(RewardFunction):
 
     def reset(self):
         """Reset the returns history."""
-        self.returns_history = []
+        self.returns_history = deque(maxlen=self.window)
 
 
 class SortinoReward(RewardFunction):
@@ -138,7 +136,7 @@ class SortinoReward(RewardFunction):
         """
         self.window = window
         self.daily_rf_rate = risk_free_rate / TRADING_DAYS_PER_YEAR
-        self.returns_history = []
+        self.returns_history = deque(maxlen=window)
 
     def compute(
         self,
@@ -149,9 +147,6 @@ class SortinoReward(RewardFunction):
     ) -> float:
         """Compute Sortino ratio over rolling window."""
         self.returns_history.append(portfolio_return)
-
-        if len(self.returns_history) > self.window:
-            self.returns_history.pop(0)
 
         if len(self.returns_history) < 2:
             return 0.0
@@ -177,7 +172,7 @@ class SortinoReward(RewardFunction):
 
     def reset(self):
         """Reset the returns history."""
-        self.returns_history = []
+        self.returns_history = deque(maxlen=self.window)
 
 
 class RiskAdjustedReturnReward(RewardFunction):
@@ -193,7 +188,7 @@ class RiskAdjustedReturnReward(RewardFunction):
         """
         self.risk_aversion = risk_aversion
         self.window = window
-        self.returns_history = []
+        self.returns_history = deque(maxlen=window)
 
     def compute(
         self,
@@ -205,9 +200,6 @@ class RiskAdjustedReturnReward(RewardFunction):
         """Compute return minus risk penalty."""
         self.returns_history.append(portfolio_return)
 
-        if len(self.returns_history) > self.window:
-            self.returns_history.pop(0)
-
         # Reward = return - risk_aversion * variance
         mean_return = np.mean(self.returns_history)
         variance = np.var(self.returns_history) if len(self.returns_history) > 1 else 0.0
@@ -217,7 +209,7 @@ class RiskAdjustedReturnReward(RewardFunction):
 
     def reset(self):
         """Reset the returns history."""
-        self.returns_history = []
+        self.returns_history = deque(maxlen=self.window)
 
 
 class DrawdownPenalizedReward(RewardFunction):

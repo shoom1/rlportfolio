@@ -9,6 +9,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from typing import Dict, List, Optional, Union
 
+from environment.constants import TRADING_DAYS_PER_YEAR
 from .metrics import DrawdownMetrics
 
 
@@ -218,7 +219,7 @@ def plot_rolling_metrics(
 
     # 2. Rolling volatility
     ax = axes[0, 1]
-    rolling_std = pd.Series(returns).rolling(window=window).std() * np.sqrt(252) * 100
+    rolling_std = pd.Series(returns).rolling(window=window).std() * np.sqrt(TRADING_DAYS_PER_YEAR) * 100
     ax.plot(dates, rolling_std, linewidth=2, color='orange')
     ax.set_xlabel('Date')
     ax.set_ylabel('Volatility (%)')
@@ -230,7 +231,7 @@ def plot_rolling_metrics(
     rolling_sharpe = (
         pd.Series(returns).rolling(window=window).mean() /
         pd.Series(returns).rolling(window=window).std() *
-        np.sqrt(252)
+        np.sqrt(TRADING_DAYS_PER_YEAR)
     )
     ax.plot(dates, rolling_sharpe, linewidth=2, color='green')
     ax.axhline(y=0, color='red', linestyle='--', alpha=0.5)

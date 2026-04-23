@@ -446,3 +446,27 @@ class TestBaseMetrics:
         assert len(returns) == 2  # n-1 returns from diff
         expected = np.array([0.05, (11000 - 10500) / 10500])
         assert np.allclose(returns, expected, atol=1e-6)
+
+    def test_get_returns_drops_leading_nan(self):
+        """PortfolioEnv's reset row has no 'return' key, so the first row of the
+        'return' column materialises as NaN when the history is framed. That
+        NaN must not leak into metrics that use np.std / np.mean."""
+        history = pd.DataFrame({
+            'value': [10000, 10500, 11000],
+            'return': [float('nan'), 0.05, 0.0476],
+        })
+        returns = BaseMetrics._get_returns(history)
+        assert not np.any(np.isnan(returns))
+        assert len(returns) == 2
+
+    def test_sharpe_ratio_with_nan_first_row(self):
+        """End-to-end: a history with a NaN in returns should still give a
+        real Sharpe ratio (not 0 and not NaN)."""
+        history = pd.DataFrame({
+            'value': [10000, 10100, 10200, 10150, 10300],
+            'return': [float('nan'), 0.01, 0.0099, -0.0049, 0.0148],
+        })
+        returns = BaseMetrics._get_returns(history)
+        sharpe = RiskMetrics().sharpe_ratio(returns)
+        assert not np.isnan(sharpe)
+        assert sharpe != 0.0
