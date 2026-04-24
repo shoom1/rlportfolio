@@ -99,14 +99,15 @@ class TestSharpeReward:
         assert len(reward_fn.returns_history) == 5
 
     def test_compute_with_insufficient_history(self):
-        """Test that it returns 0 with insufficient history."""
+        """Cold-start with <2 samples: fall back to the raw step return
+        so the agent still gets a reward signal in the first step."""
         reward_fn = SharpeReward(window=10)
         reward = reward_fn.compute(
             portfolio_return=0.01,
             portfolio_value=10100,
             previous_value=10000
         )
-        assert reward == 0.0
+        assert reward == 0.01
 
     def test_reset_clears_history(self):
         """Test that reset clears the history."""

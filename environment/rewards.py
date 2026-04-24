@@ -102,9 +102,12 @@ class SharpeReward(RewardFunction):
         """Compute Sharpe ratio over rolling window."""
         self.returns_history.append(portfolio_return)
 
-        # Need sufficient history
+        # Cold start: with 0 or 1 samples we can't compute a ratio, so
+        # fall back to the raw step return. Returning a flat 0.0 here
+        # starves the agent of signal for the first two steps of every
+        # episode — a noticeable handicap for short-horizon training.
         if len(self.returns_history) < 2:
-            return 0.0
+            return self.returns_history[-1] if self.returns_history else 0.0
 
         returns_array = np.array(self.returns_history)
         excess_returns = returns_array - self.daily_rf_rate
@@ -148,8 +151,9 @@ class SortinoReward(RewardFunction):
         """Compute Sortino ratio over rolling window."""
         self.returns_history.append(portfolio_return)
 
+        # Cold start fallback: see SharpeReward.compute for rationale.
         if len(self.returns_history) < 2:
-            return 0.0
+            return self.returns_history[-1] if self.returns_history else 0.0
 
         returns_array = np.array(self.returns_history)
         excess_returns = returns_array - self.daily_rf_rate

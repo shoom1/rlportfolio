@@ -181,8 +181,15 @@ class BollingerBandsFeature(Feature):
                 df['bb_upper'] = bbands[upper_col]
                 df['bb_middle'] = bbands[middle_col]
                 df['bb_lower'] = bbands[lower_col]
-                df['bb_width'] = (df['bb_upper'] - df['bb_lower']) / df['bb_middle']
-                df['bb_percent'] = (df['close'] - df['bb_lower']) / (df['bb_upper'] - df['bb_lower'])
+                # Guard against zero denominators on flat-price windows:
+                # bb_middle can be 0 for zero-priced series, and
+                # (bb_upper - bb_lower) collapses to 0 when volatility is
+                # zero. Replace 0 with NaN so results are NaN rather than
+                # inf — downstream env fillna handles the NaN cleanly.
+                band_range = (df['bb_upper'] - df['bb_lower']).replace(0, np.nan)
+                middle = df['bb_middle'].replace(0, np.nan)
+                df['bb_width'] = band_range / middle
+                df['bb_percent'] = (df['close'] - df['bb_lower']) / band_range
         return df
 
     def get_column_names(self) -> List[str]:
@@ -377,11 +384,20 @@ class FeatureEngineer:
         """
         df = data.copy()
 
-        # Forward fill missing values (holidays, etc.)
-        df = df.ffill()
+        # Per-ticker forward fill: fills intra-series gaps (holidays, missed
+        # bars) WITHOUT cross-contaminating values between tickers. A plain
+        # df.ffill() on a (date, ticker)-sorted index would carry one
+        # ticker's value into another's NaN cell.
+        df = df.groupby(level='ticker', group_keys=False).ffill()
 
-        # Drop any remaining NaN rows (initial periods for indicators)
-        df = df.dropna()
+        # Intentionally NO dropna here. Indicator warm-up (e.g. SMA_50
+        # needs 50 bars) and normalization warm-up (pct_change over
+        # lookback_window) leave leading NaN rows per ticker. Dropping
+        # them globally truncates the entire multi-ticker frame to the
+        # slowest warm-up — wasting data. Instead we keep all rows and
+        # rely on PortfolioEnv._precompute_arrays, which fillna(0.0) on
+        # feature columns and per-ticker ffills on close price. Warm-up
+        # observations are noisy but their prices are valid.
 
         if normalize:
             # Normalize price-based features using percent change from lookback

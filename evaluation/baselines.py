@@ -272,6 +272,18 @@ class InverseVolatilityStrategy(BaselineStrategy):
 class BaselineStrategyRegistry:
     """Registry for baseline strategies."""
 
+    # Class catalog: maps short strategy kind → class. `create(kind, **kwargs)`
+    # constructs parametric instances without needing a pre-registered
+    # instance per hyperparameter (e.g. momentum with lookback=50).
+    _STRATEGY_CLASSES: Dict[str, type] = {
+        'equal_weight': EqualWeightStrategy,
+        'buy_and_hold': BuyAndHoldStrategy,
+        'random': RandomStrategy,
+        'momentum': MomentumStrategy,
+        'min_variance': MinimumVarianceStrategy,
+        'inverse_vol': InverseVolatilityStrategy,
+    }
+
     def __init__(self):
         self._strategies: Dict[str, BaselineStrategy] = {}
         self._register_defaults()
@@ -290,11 +302,28 @@ class BaselineStrategyRegistry:
         self._strategies[strategy.name] = strategy
 
     def get(self, name: str) -> BaselineStrategy:
-        """Get a strategy by name."""
+        """Get a pre-registered strategy by its full name (e.g. 'momentum_20')."""
         if name not in self._strategies:
             raise ValueError(f"Unknown strategy: {name}. Available: {self.list_strategies()}")
         return self._strategies[name]
 
+    def create(self, kind: str, **kwargs) -> BaselineStrategy:
+        """Construct a strategy by kind with custom params (e.g.
+        ``create('momentum', lookback=50)``). The resulting instance is
+        not stored in the registry — call ``register()`` if you want it
+        to be retrievable via ``get()``.
+        """
+        if kind not in self._STRATEGY_CLASSES:
+            raise ValueError(
+                f"Unknown strategy kind: {kind}. "
+                f"Available: {sorted(self._STRATEGY_CLASSES)}"
+            )
+        return self._STRATEGY_CLASSES[kind](**kwargs)
+
     def list_strategies(self):
         """List all registered strategies."""
         return list(self._strategies.keys())
+
+    def list_kinds(self):
+        """List all strategy kinds available via ``create()``."""
+        return list(self._STRATEGY_CLASSES.keys())

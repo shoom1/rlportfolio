@@ -6,6 +6,7 @@ Works alongside W&B for comprehensive experiment tracking.
 import json
 import re
 import sqlite3
+from contextlib import closing
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any, Optional, List
@@ -204,51 +205,50 @@ class PortfolioExperimentTracker:
 
     def _init_database(self):
         """Initialize SQLite database."""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            cursor = conn.cursor()
 
-        # Experiments table
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS experiments (
-                experiment_id TEXT PRIMARY KEY,
-                name TEXT NOT NULL,
-                description TEXT,
-                wandb_run_id TEXT,
-                created_at TEXT,
-                updated_at TEXT,
-                algorithm TEXT,
-                status TEXT,
-                final_value REAL,
-                total_return REAL,
-                sharpe_ratio REAL,
-                max_drawdown REAL,
-                total_timesteps INTEGER
-            )
-        ''')
+            # Experiments table
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS experiments (
+                    experiment_id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    description TEXT,
+                    wandb_run_id TEXT,
+                    created_at TEXT,
+                    updated_at TEXT,
+                    algorithm TEXT,
+                    status TEXT,
+                    final_value REAL,
+                    total_return REAL,
+                    sharpe_ratio REAL,
+                    max_drawdown REAL,
+                    total_timesteps INTEGER
+                )
+            ''')
 
-        # Tags table
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS tags (
-                experiment_id TEXT,
-                tag TEXT,
-                FOREIGN KEY (experiment_id) REFERENCES experiments (experiment_id)
-            )
-        ''')
+            # Tags table
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS tags (
+                    experiment_id TEXT,
+                    tag TEXT,
+                    FOREIGN KEY (experiment_id) REFERENCES experiments (experiment_id)
+                )
+            ''')
 
-        # Metrics table for time series
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS metrics_history (
-                experiment_id TEXT,
-                metric_name TEXT,
-                value REAL,
-                step INTEGER,
-                timestamp TEXT,
-                FOREIGN KEY (experiment_id) REFERENCES experiments (experiment_id)
-            )
-        ''')
+            # Metrics table for time series
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS metrics_history (
+                    experiment_id TEXT,
+                    metric_name TEXT,
+                    value REAL,
+                    step INTEGER,
+                    timestamp TEXT,
+                    FOREIGN KEY (experiment_id) REFERENCES experiments (experiment_id)
+                )
+            ''')
 
-        conn.commit()
-        conn.close()
+            conn.commit()
 
     def create_experiment(
         self,
@@ -277,37 +277,36 @@ class PortfolioExperimentTracker:
     def _save_experiment(self, experiment: PortfolioExperiment):
         """Save experiment to database and JSON."""
         # Save to SQLite
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            cursor = conn.cursor()
 
-        cursor.execute('''
-            INSERT OR REPLACE INTO experiments
-            (experiment_id, name, description, wandb_run_id, created_at, updated_at,
-             algorithm, final_value, total_return, sharpe_ratio, max_drawdown, total_timesteps)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (
-            experiment.experiment_id,
-            experiment.name,
-            experiment.description,
-            experiment.wandb_run_id,
-            experiment.created_at,
-            experiment.updated_at,
-            experiment.model_info.get('algorithm'),
-            experiment.portfolio_metrics.get('final_value'),
-            experiment.portfolio_metrics.get('total_return'),
-            experiment.portfolio_metrics.get('sharpe_ratio'),
-            experiment.portfolio_metrics.get('max_drawdown'),
-            experiment.training_metrics.get('total_timesteps')
-        ))
+            cursor.execute('''
+                INSERT OR REPLACE INTO experiments
+                (experiment_id, name, description, wandb_run_id, created_at, updated_at,
+                 algorithm, final_value, total_return, sharpe_ratio, max_drawdown, total_timesteps)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                experiment.experiment_id,
+                experiment.name,
+                experiment.description,
+                experiment.wandb_run_id,
+                experiment.created_at,
+                experiment.updated_at,
+                experiment.model_info.get('algorithm'),
+                experiment.portfolio_metrics.get('final_value'),
+                experiment.portfolio_metrics.get('total_return'),
+                experiment.portfolio_metrics.get('sharpe_ratio'),
+                experiment.portfolio_metrics.get('max_drawdown'),
+                experiment.training_metrics.get('total_timesteps')
+            ))
 
-        # Save tags
-        cursor.execute('DELETE FROM tags WHERE experiment_id = ?', (experiment.experiment_id,))
-        for tag in experiment.tags:
-            cursor.execute('INSERT INTO tags (experiment_id, tag) VALUES (?, ?)',
-                         (experiment.experiment_id, tag))
+            # Save tags
+            cursor.execute('DELETE FROM tags WHERE experiment_id = ?', (experiment.experiment_id,))
+            for tag in experiment.tags:
+                cursor.execute('INSERT INTO tags (experiment_id, tag) VALUES (?, ?)',
+                             (experiment.experiment_id, tag))
 
-        conn.commit()
-        conn.close()
+            conn.commit()
 
         # Save detailed JSON
         json_path = self._safe_experiment_path(experiment.experiment_id, ".json")
@@ -382,8 +381,6 @@ class PortfolioExperimentTracker:
         Returns:
             DataFrame of experiments
         """
-        conn = sqlite3.connect(self.db_path)
-
         query = "SELECT * FROM experiments WHERE 1=1"
         params = []
 
@@ -407,10 +404,8 @@ class PortfolioExperimentTracker:
         query += " ORDER BY created_at DESC LIMIT ?"
         params.append(limit)
 
-        df = pd.read_sql_query(query, conn, params=params)
-        conn.close()
-
-        return df
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            return pd.read_sql_query(query, conn, params=params)
 
     def get_best_experiments(self, metric: str = 'sharpe_ratio', top_n: int = 10) -> pd.DataFrame:
         """Get top experiments by metric."""
@@ -419,7 +414,6 @@ class PortfolioExperimentTracker:
                 f"Invalid metric: '{metric}'. "
                 f"Valid metrics: {sorted(self.VALID_METRIC_COLUMNS)}"
             )
-        conn = sqlite3.connect(self.db_path)
 
         query = f"""
             SELECT * FROM experiments
@@ -428,25 +422,20 @@ class PortfolioExperimentTracker:
             LIMIT ?
         """
 
-        df = pd.read_sql_query(query, conn, params=(top_n,))
-        conn.close()
-
-        return df
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            return pd.read_sql_query(query, conn, params=(top_n,))
 
     def delete_experiment(self, experiment_id: str):
         """Delete experiment."""
         json_path = self._safe_experiment_path(experiment_id, ".json")
         csv_path = self._safe_experiment_path(experiment_id, "_history.csv")
 
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-
-        cursor.execute('DELETE FROM experiments WHERE experiment_id = ?', (experiment_id,))
-        cursor.execute('DELETE FROM tags WHERE experiment_id = ?', (experiment_id,))
-        cursor.execute('DELETE FROM metrics_history WHERE experiment_id = ?', (experiment_id,))
-
-        conn.commit()
-        conn.close()
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            cursor = conn.cursor()
+            cursor.execute('DELETE FROM experiments WHERE experiment_id = ?', (experiment_id,))
+            cursor.execute('DELETE FROM tags WHERE experiment_id = ?', (experiment_id,))
+            cursor.execute('DELETE FROM metrics_history WHERE experiment_id = ?', (experiment_id,))
+            conn.commit()
 
         if json_path.exists():
             json_path.unlink()
