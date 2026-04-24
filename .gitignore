@@ -72,6 +72,8 @@ htmlcov/
 # Internal md files
 CLAUDE.md
 docs/
+notes/
+.claude/
 
 # Experiment tracking
 experiments/portfolio/*.db
