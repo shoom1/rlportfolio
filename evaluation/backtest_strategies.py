@@ -7,6 +7,8 @@ Provides different execution modes for portfolio backtesting:
 - WalkForward: Walk-forward analysis with rolling windows
 """
 
+import warnings
+
 import numpy as np
 import pandas as pd
 from abc import ABC, abstractmethod
@@ -367,7 +369,17 @@ class MonteCarloBacktestStrategy(BacktestStrategy):
         if not histories:
             raise ValueError("No histories to aggregate")
 
-        min_len = min(len(h) for h in histories)
+        lengths = [len(h) for h in histories]
+        min_len = min(lengths)
+        max_len = max(lengths)
+        if max_len != min_len:
+            warnings.warn(
+                f"Monte Carlo simulations returned ragged histories "
+                f"(min={min_len}, max={max_len}); truncating all to "
+                f"{min_len} steps. Short runs usually indicate early "
+                f"termination (e.g. insolvency) and will bias the mean.",
+                stacklevel=2,
+            )
         all_values = np.array([h['value'].values[:min_len] for h in histories])
 
         if method == 'mean':

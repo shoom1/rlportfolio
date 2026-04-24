@@ -125,12 +125,13 @@ class PortfolioEnv(gym.Env):
             dtype=np.float32
         )
 
-        # Initialize state
+        # Initialize state. weights/holdings are always 1-D float arrays;
+        # the shape is an invariant relied on by _get_observation.
         self.current_step = 0
         self.portfolio_value = initial_balance
         self.cash = initial_balance
-        self.holdings = np.zeros(self.n_assets)  # Number of shares
-        self.weights = np.zeros(self.n_assets)  # Portfolio weights
+        self.holdings = np.zeros(self.n_assets, dtype=np.float64)
+        self.weights = np.zeros(self.n_assets, dtype=np.float32)
         self.portfolio_history = []
 
     def _validate_data(self):
@@ -198,8 +199,8 @@ class PortfolioEnv(gym.Env):
         self.current_step = start_step
         self.portfolio_value = self.initial_balance
         self.cash = self.initial_balance
-        self.holdings = np.zeros(self.n_assets)
-        self.weights = np.zeros(self.n_assets)
+        self.holdings = np.zeros(self.n_assets, dtype=np.float64)
+        self.weights = np.zeros(self.n_assets, dtype=np.float32)
         self.portfolio_history = [{
             'date': self.dates[self.window_size + start_step],
             'value': self.portfolio_value,
@@ -256,15 +257,21 @@ class PortfolioEnv(gym.Env):
         new_asset_values = self.holdings * new_prices
         new_portfolio_value = self.cash + np.sum(new_asset_values)
 
-        # Update weights (ensure 1D array)
-        if new_portfolio_value > 0:
-            weights_calc = new_asset_values / new_portfolio_value
-            self.weights = np.asarray(weights_calc).flatten().astype(np.float32)
-        else:
-            self.weights = np.zeros(self.n_assets, dtype=np.float32)
+        # Insolvency: if the portfolio has been wiped out, terminate the
+        # episode with a full-loss return so the reward reflects ruin
+        # rather than a silent 0.0 that keeps the agent stepping through
+        # garbage observations.
+        bankrupt = new_portfolio_value <= 0
 
-        # Calculate return
-        portfolio_return = (new_portfolio_value - old_portfolio_value) / old_portfolio_value if old_portfolio_value > 0 else 0.0
+        if bankrupt:
+            self.weights = np.zeros(self.n_assets, dtype=np.float32)
+            portfolio_return = -1.0
+        else:
+            self.weights = (new_asset_values / new_portfolio_value).astype(np.float32)
+            portfolio_return = (
+                (new_portfolio_value - old_portfolio_value) / old_portfolio_value
+                if old_portfolio_value > 0 else 0.0
+            )
 
         # Compute reward
         reward = self.reward_function.compute(
@@ -277,11 +284,11 @@ class PortfolioEnv(gym.Env):
         # Update portfolio value
         self.portfolio_value = new_portfolio_value
 
-        # Store history (ensure weights are 1D)
+        # Store history
         self.portfolio_history.append({
             'date': self.dates[self.window_size + self.current_step],
             'value': self.portfolio_value,
-            'weights': self.weights.flatten().copy(),  # Ensure 1D
+            'weights': self.weights.copy(),
             'cash': self.cash,
             'return': portfolio_return,
             'reward': reward,
@@ -289,7 +296,7 @@ class PortfolioEnv(gym.Env):
         })
 
         # Check if episode is done
-        terminated = self.current_step >= self.n_steps - 1
+        terminated = bankrupt or self.current_step >= self.n_steps - 1
         truncated = False
 
         # Get new observation and info
@@ -383,13 +390,10 @@ class PortfolioEnv(gym.Env):
         end = start + self.window_size
         market_features = self._feature_array[start:end].reshape(-1)
 
-        weights_flat = (
-            self.weights.flatten() if self.weights.ndim > 1 else self.weights
-        )
         cash_ratio = np.array(
             [self.cash / self.portfolio_value if self.portfolio_value > 0 else 1.0]
         )
-        portfolio_state = np.concatenate([weights_flat, cash_ratio])
+        portfolio_state = np.concatenate([self.weights, cash_ratio])
 
         observation = np.concatenate([market_features, portfolio_state]).astype(np.float32)
 

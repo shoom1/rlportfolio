@@ -533,8 +533,20 @@ class TestMonteCarloAggregation:
             pd.DataFrame({'value': [100, 105, 115]}),
             pd.DataFrame({'value': [100, 108, 112, 119]}),
         ]
-        agg = mc._aggregate_histories(histories, method='mean')
+        with pytest.warns(UserWarning, match="ragged histories"):
+            agg = mc._aggregate_histories(histories, method='mean')
         assert len(agg) == 3  # min_len
+
+    def test_equal_length_histories_do_not_warn(self):
+        import warnings
+        mc = MonteCarloBacktestStrategy(n_simulations=2)
+        histories = [
+            pd.DataFrame({'value': [100, 110, 120]}),
+            pd.DataFrame({'value': [100, 105, 115]}),
+        ]
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")  # fail on any warning
+            mc._aggregate_histories(histories, method='mean')
 
     def test_aggregated_frame_drops_run_dependent_columns(self):
         """Weights/cash/transaction_cost are per-run and must not be copied

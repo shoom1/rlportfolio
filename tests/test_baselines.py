@@ -375,3 +375,26 @@ class TestBaselineStrategyRegistry:
 
         assert isinstance(strategies, list)
         assert len(strategies) >= 6
+
+    def test_create_with_custom_kwargs(self):
+        """registry.create('momentum', lookback=50) should return a fresh
+        parametric instance without touching the registered defaults."""
+        registry = BaselineStrategyRegistry()
+
+        strat = registry.create('momentum', lookback=50)
+        assert isinstance(strat, MomentumStrategy)
+        assert strat.lookback == 50
+        assert strat.name == 'momentum_50'
+        assert 'momentum_50' not in registry.list_strategies()
+
+    def test_create_unknown_kind_raises_error(self):
+        registry = BaselineStrategyRegistry()
+        with pytest.raises(ValueError, match="Unknown strategy kind"):
+            registry.create('not_a_kind')
+
+    def test_list_kinds_returns_all_classes(self):
+        registry = BaselineStrategyRegistry()
+        kinds = registry.list_kinds()
+        assert 'momentum' in kinds
+        assert 'min_variance' in kinds
+        assert 'inverse_vol' in kinds

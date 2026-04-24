@@ -293,3 +293,37 @@ class TestPortfolioEnv:
         assert 'cash' in info
         assert 'holdings' in info
         assert 'date' in info
+
+    def test_insolvency_terminates_episode(self, simple_env):
+        """If the portfolio is wiped out, step() must mark the episode
+        terminated and surface a full-loss return rather than silently
+        continuing with portfolio_value <= 0."""
+        simple_env.reset()
+
+        # Force insolvency by setting portfolio state to wiped-out.
+        simple_env.cash = 0.0
+        simple_env.holdings = np.zeros(simple_env.n_assets, dtype=np.float64)
+        simple_env.portfolio_value = 0.0
+
+        action = np.ones(simple_env.n_assets + 1)
+        obs, reward, terminated, truncated, info = simple_env.step(action)
+
+        assert terminated, "Bankrupt portfolio must terminate"
+        history = simple_env.get_portfolio_history()
+        assert history.iloc[-1]['return'] == -1.0
+
+    def test_weights_are_always_1d_float32(self, simple_env):
+        """Regression: weights must stay 1-D float32 throughout the
+        episode so _get_observation can concatenate without defensive
+        flattens."""
+        simple_env.reset()
+        assert simple_env.weights.ndim == 1
+        assert simple_env.weights.dtype == np.float32
+
+        for _ in range(10):
+            action = simple_env.action_space.sample()
+            obs, reward, terminated, truncated, info = simple_env.step(action)
+            assert simple_env.weights.ndim == 1
+            assert simple_env.weights.dtype == np.float32
+            if terminated or truncated:
+                break

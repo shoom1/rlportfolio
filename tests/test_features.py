@@ -185,6 +185,20 @@ class TestBollingerBandsFeature:
         columns = feature.get_column_names()
         assert columns == ['bb_upper', 'bb_middle', 'bb_lower', 'bb_width', 'bb_percent']
 
+    def test_flat_price_series_does_not_produce_inf(self):
+        """Flat prices make band_range == 0, which previously produced inf
+        in bb_width/bb_percent. With zero-denominator guarding, the result
+        is NaN (acceptable — downstream fillna handles it)."""
+        df = pd.DataFrame({'close': [100.0] * 50})
+
+        feature = BollingerBandsFeature(length=20, std=2.0)
+        result = feature.compute(df)
+
+        for col in ('bb_width', 'bb_percent'):
+            if col in result.columns:
+                finite_or_nan = np.isfinite(result[col]) | result[col].isna()
+                assert finite_or_nan.all(), f"{col} contains inf values"
+
 
 class TestATRFeature:
     """Tests for ATRFeature."""
@@ -350,6 +364,35 @@ class TestFeatureEngineer:
 
         assert isinstance(prepared, pd.DataFrame)
         assert not prepared.empty
+
+    def test_prepare_for_environment_ffill_does_not_cross_tickers(self):
+        """Regression: a plain df.ffill() on a sorted (date, ticker) frame
+        will fill one ticker's NaN with a previous ticker's value. The
+        fix is per-ticker groupby ffill."""
+        dates = pd.date_range('2023-01-01', periods=5, freq='D')
+        rows = []
+        for ticker, value in [('AAPL', 100.0), ('MSFT', 200.0)]:
+            for d in dates:
+                rows.append({'date': d, 'ticker': ticker, 'close': value, 'feat': np.nan})
+        df = pd.DataFrame(rows).set_index(['date', 'ticker']).sort_index()
+
+        # Seed a value only on AAPL at d0 and MSFT at d2. Cross-ticker
+        # ffill would fill MSFT@d0/d1 with AAPL's seed; per-ticker must
+        # leave them NaN.
+        df.loc[(dates[0], 'AAPL'), 'feat'] = 1.0
+        df.loc[(dates[2], 'MSFT'), 'feat'] = 2.0
+
+        engineer = FeatureEngineer()
+        prepared = engineer.prepare_for_environment(df, normalize=False)
+
+        assert prepared.loc[(dates[0], 'MSFT'), 'feat'] != prepared.loc[(dates[0], 'MSFT'), 'feat'] \
+            or prepared.loc[(dates[0], 'MSFT'), 'feat'] != 1.0, \
+            "MSFT@d0 must not inherit AAPL's feat value"
+        # AAPL's seed propagates forward within its own series only.
+        assert prepared.loc[(dates[3], 'AAPL'), 'feat'] == 1.0
+        # MSFT's seed at d2 should carry forward to d3, d4 — but not backward.
+        assert prepared.loc[(dates[3], 'MSFT'), 'feat'] == 2.0
+        assert pd.isna(prepared.loc[(dates[1], 'MSFT'), 'feat'])
 
     def test_create_observation_columns(self):
         """Test creating observation columns list."""
