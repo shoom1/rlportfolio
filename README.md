@@ -13,6 +13,7 @@ This project implements a multi-asset portfolio allocation agent using deep rein
 - **Rich Feature Engineering**: Technical indicators (RSI, MACD, Bollinger Bands, etc.) using pandas-ta
 - **Flexible Reward Functions**: Sharpe ratio, Sortino ratio, risk-adjusted returns, and more
 - **Comprehensive Backtesting**: Compare RL agents against traditional baselines (equal weight, momentum, min variance, etc.)
+- **Walk-Forward Evaluation**: Expanding-window walk-forward harness (library + CLI) for honest out-of-sample assessment across regimes
 - **Professional Evaluation**: Complete metrics suite and visualization tools
 
 ## Installation
@@ -127,32 +128,48 @@ histories = backtester.get_histories()
 plot_strategy_comparison(histories, save_path='results/comparison.png')
 ```
 
+### 4. Walk-Forward Out-of-Sample Evaluation
+
+For a rigorous OOS assessment across market regimes — trains a fresh agent on every fold's expanding window and backtests on the next disjoint slice:
+
+```bash
+# Quarterly walk-forward from 2005 to today, ~70 folds
+conda run -n rlportfolio python -m evaluation.walk_forward \
+    --config configs/opt_c_div19.yaml \
+    --t-min-days 756 --stride-days 63 \
+    --output results/walk_forward.csv
+```
+
+Produces a per-fold CSV (agent + baselines on each disjoint test window) and an aggregate summary (mean/std Sharpe, hit rate, regime split). The last 6 months of each fold's train window are reserved for model selection via `EvalCallback`, so the test window is never seen during training. Programmatic API in `evaluation.walk_forward.WalkForwardEvaluator`; see `examples/walk_forward.py` for a minimal driver.
+
 ## Project Structure
 
 ```
 rlportfolio/
-├── data/                   # Data fetching and feature engineering
-│   ├── fetcher.py         # Thin adapter around finbase.DataClient
-│   └── features.py        # Technical indicators with registry pattern
-├── environment/           # Custom Gym environment
-│   ├── portfolio_env.py   # Multi-asset portfolio environment
-│   ├── rewards.py         # Reward function implementations
-│   └── transaction_costs.py # Pluggable cost/slippage models
-├── training/              # Training infrastructure
-│   ├── train.py           # Training script with config support
-│   └── models/            # Saved models and checkpoints
-├── evaluation/            # Backtesting and analysis
-│   ├── metrics.py         # Performance metrics (Sharpe, Sortino, etc.)
-│   ├── backtest.py        # Stateful backtester
-│   ├── baselines.py       # Baseline strategy implementations
-│   ├── visualization.py   # Plotting functions
-│   └── visualize_network.py # NN architecture visualization
-├── experiments/           # Experiment tracking (W&B, MLflow, SQLite)
-├── configs/               # YAML configuration files
-│   ├── default_config.yaml
-│   ├── sac_config.yaml
-│   └── tech_stocks_config.yaml
-└── tests/                 # Unit tests
+├── data/                     # Data fetching and feature engineering
+│   ├── fetcher.py            # Thin adapter around finbase.DataClient
+│   └── features.py           # Technical indicators with registry pattern
+├── environment/              # Custom Gymnasium environment
+│   ├── portfolio_env.py      # Multi-asset portfolio env (precomputed feature cube)
+│   ├── rewards.py            # Reward function implementations
+│   ├── transaction_costs.py  # Pluggable cost/slippage models
+│   └── constants.py          # Shared numeric constants
+├── training/                 # Training infrastructure
+│   ├── train.py              # Training script + PortfolioTrainer
+│   ├── config.py             # Typed TrainingConfig dataclasses
+│   └── models/               # Saved models and checkpoints
+├── evaluation/               # Backtesting and analysis
+│   ├── metrics.py            # Performance metrics (Sharpe, Sortino, etc.)
+│   ├── backtest.py           # Stateful Backtester facade
+│   ├── backtest_strategies.py # Sequential / walk-forward / Monte Carlo execution
+│   ├── baselines.py          # Baseline strategy implementations
+│   ├── walk_forward.py       # Walk-forward training + OOS harness (library + CLI)
+│   ├── visualization.py      # Plotting functions
+│   └── visualize_network.py  # NN architecture visualization
+├── experiments/              # Experiment tracking (W&B, MLflow, SQLite)
+├── configs/                  # YAML configuration files (see directory for full list)
+├── examples/                 # Thin demo scripts (walk_forward, seed_variance, ...)
+└── tests/                    # Unit tests (320 passing)
 ```
 
 ## Architecture
@@ -179,11 +196,13 @@ rlportfolio/
 - Configuration via YAML files
 - Tensorboard logging and model checkpointing
 - Evaluation callback for validation
+- **Disjoint train/val**: `PortfolioTrainer.prepare_data` fetches a single combined window of `train_days + val_days` and slices on date, so val is strictly after train (no in-sample leakage into the eval callback).
 
 ### Evaluation
 
 - **Metrics**: Total return, Sharpe ratio, Sortino ratio, max drawdown, volatility, win rate, etc.
 - **Baselines**: Equal weight, buy-and-hold, momentum, minimum variance, inverse volatility
+- **Walk-Forward**: Expanding-window protocol that retrains per fold; last 6 months of each fold's train reserved for model selection; disjoint quarterly test windows. Library (`evaluation.walk_forward.WalkForwardEvaluator`) and CLI (`python -m evaluation.walk_forward`).
 - **Visualization**: Performance comparison, drawdown, weights evolution, risk-return scatter
 
 ## Configuration
@@ -272,14 +291,16 @@ See `data/fetcher.py` for the thin adapter layer.
 
 ## Results
 
-Example performance metrics (will vary based on market conditions and training):
+Results are sensitive to universe, time period, and random seed. Single-window comparisons can overstate the RL edge — an honest assessment needs walk-forward across regimes.
 
-| Strategy | Total Return | Sharpe Ratio | Max Drawdown | Volatility |
-|----------|--------------|--------------|--------------|------------|
-| PPO Agent | 24.5% | 1.45 | -12.3% | 15.2% |
-| SAC Agent | 22.1% | 1.38 | -11.8% | 14.8% |
-| Equal Weight | 18.3% | 1.12 | -15.6% | 16.5% |
-| Momentum | 20.8% | 1.25 | -18.2% | 17.8% |
+Run the walk-forward harness on your universe of choice to generate per-fold metrics:
+
+```bash
+conda run -n rlportfolio python -m evaluation.walk_forward \
+    --config configs/opt_c_div19.yaml
+```
+
+Outputs a per-fold CSV and prints aggregate Sharpe / hit-rate / bull-vs-bear split. Quarterly protocol with 3-year minimum train, 1-quarter stride and disjoint test windows, 6-month in-sample selection slice. See `evaluation/walk_forward.py` for all knobs.
 
 ## Requirements
 
