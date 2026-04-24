@@ -46,6 +46,11 @@ from .visualize_network import (
     create_ascii_diagram,
     analyze_network_from_config
 )
+# NOTE: evaluation.walk_forward is a submodule, not auto-exported here.
+# Import it explicitly:
+#     from evaluation.walk_forward import WalkForwardEvaluator, WalkForwardConfig
+# Keeping it out of __init__ avoids a runpy double-import warning when the
+# module is run via `python -m evaluation.walk_forward`.
 
 __all__ = [
     # Metrics - Composition pattern
@@ -86,5 +91,5 @@ __all__ = [
     'print_network_structure',
     'print_layer_dimensions',
     'create_ascii_diagram',
-    'analyze_network_from_config'
+    'analyze_network_from_config',
 ]
