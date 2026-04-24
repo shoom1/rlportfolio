@@ -112,21 +112,24 @@ class PortfolioTrainer:
         """Dict view of the typed config (for trackers, tests, and logging)."""
         return self.cfg.to_dict()
 
-    def prepare_data(self, train: bool = True) -> pd.DataFrame:
-        """
-        Fetch and prepare data for training or validation.
+    def _prepare_combined_data(self) -> pd.DataFrame:
+        """Fetch train+val OHLCV, compute features, prepare for environment.
 
-        Args:
-            train: Whether to prepare training data (True) or validation data (False)
-
-        Returns:
-            Processed DataFrame ready for environment
+        Cached on first call — both prepare_data(train=True) and
+        prepare_data(train=False) slice this single DataFrame so train and
+        val are disjoint, and so features at the start of val use the tail
+        of train for rolling-window warm-up (no look-ahead, since those
+        windows look backwards).
         """
+        cached = getattr(self, '_combined_env_data', None)
+        if cached is not None:
+            return cached
+
         tickers = self.cfg.data.tickers
-        days = self.cfg.data.train_days if train else self.cfg.data.val_days
+        total_days = self.cfg.data.train_days + self.cfg.data.val_days
 
-        print(f"Fetching {'training' if train else 'validation'} data...")
-        data = self.data_fetcher.get_latest_data(tickers, days=days)
+        print("Fetching combined train+val data...")
+        data = self.data_fetcher.get_latest_data(tickers, days=total_days)
 
         print("Computing features...")
         features_data = self.feature_engineer.compute_features(data)
@@ -134,7 +137,31 @@ class PortfolioTrainer:
         print("Preparing for environment...")
         env_data = self.feature_engineer.prepare_for_environment(features_data)
 
+        self._combined_env_data = env_data
         return env_data
+
+    def prepare_data(self, train: bool = True) -> pd.DataFrame:
+        """
+        Return disjoint train or validation slice.
+
+        Splits the combined env data by date: the most recent `val_days`
+        calendar days are the validation set, everything before is the
+        training set.
+
+        Args:
+            train: True for the training slice, False for the validation slice.
+
+        Returns:
+            Processed DataFrame ready for environment.
+        """
+        env_data = self._prepare_combined_data()
+
+        dates = env_data.index.get_level_values('date')
+        val_start = dates.max() - pd.Timedelta(days=self.cfg.data.val_days)
+
+        if train:
+            return env_data[dates < val_start]
+        return env_data[dates >= val_start]
 
     def create_environment(self, data: pd.DataFrame, monitor_path: Optional[str] = None) -> PortfolioEnv:
         """
@@ -216,6 +243,16 @@ class PortfolioTrainer:
         except ImportError:
             print("Note: tensorboard not installed. Tensorboard logging disabled.")
 
+        # SB3's progress bar needs `rich` as a tqdm backend — only enable if
+        # present. Same defensive pattern as the tensorboard check above.
+        try:
+            import rich  # noqa: F401
+            import tqdm  # noqa: F401
+            progress_bar = True
+        except ImportError:
+            print("Note: rich/tqdm not installed. Training progress bar disabled.")
+            progress_bar = False
+
         # Create or load agent
         if resume_path and os.path.exists(resume_path):
             print(f"Resuming from checkpoint: {resume_path}")
@@ -277,7 +314,7 @@ class PortfolioTrainer:
             agent.learn(
                 total_timesteps=self.cfg.training.total_timesteps,
                 callback=callbacks,
-                progress_bar=True
+                progress_bar=progress_bar,
             )
 
             # Save final model

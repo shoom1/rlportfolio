@@ -104,6 +104,22 @@ class TestBuyAndHoldStrategy:
         assert np.allclose(action[:-1], np.ones(env.n_assets))
         assert action[-1] == strategy.cash_weight
 
+    def test_handles_negative_cash_after_transaction_costs(self):
+        """Transaction costs can drive cash slightly negative. The strategy
+        must still produce a valid (non-NaN) action."""
+        strategy = BuyAndHoldStrategy()
+
+        class MockEnv:
+            n_assets = 3
+            weights = np.array([0.4, 0.35, 0.25])
+            cash = -5.0  # negative after txn costs ate into it
+            portfolio_value = 10000.0
+
+        env = MockEnv()
+        strategy.get_action(env, step=0)  # sets first_step = False
+        action = strategy.get_action(env, step=1)
+        assert not np.any(np.isnan(action))
+
 
 class TestRandomStrategy:
     """Tests for RandomStrategy."""
@@ -232,6 +248,30 @@ class TestMinimumVarianceStrategy:
         """Test strategy name."""
         strategy = MinimumVarianceStrategy(lookback=60)
         assert strategy.name == 'min_variance_60'
+
+    def test_handles_negative_min_var_weights(self):
+        """Unconstrained min-variance can produce negative (short) weights when
+        assets are strongly correlated. log(negative + eps) is NaN — the
+        strategy must clip/fall back so the emitted action contains no NaN."""
+        strategy = MinimumVarianceStrategy(lookback=60)
+
+        class MockEnv:
+            n_assets = 2
+            tickers = ['A', 'B']
+
+            def _get_prices(self, step):
+                # Two assets where B is ~2x the return of A with small noise.
+                # Covariance matrix is near-singular -> inv(Sigma) @ 1 has a
+                # negative component.
+                rng = np.random.RandomState(step)
+                noise = rng.normal(0.0, 0.0005, 2)
+                base = 1.001 ** step
+                return np.array([100.0 * base * (1.0 + noise[0]),
+                                 100.0 * base * (1.0 + 2.0 * noise[0] + noise[1])])
+
+        env = MockEnv()
+        action = strategy.get_action(env, step=61)
+        assert not np.any(np.isnan(action))
 
 
 class TestInverseVolatilityStrategy:

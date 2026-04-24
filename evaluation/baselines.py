@@ -86,9 +86,11 @@ class BuyAndHoldStrategy(BaselineStrategy):
         else:
             # Return inverse softmax of current weights to maintain them
             asset_weights = np.log(env.weights + LOG_EPSILON)
-            # Maintain cash ratio as well
+            # Maintain cash ratio as well. Transaction costs can drive cash
+            # slightly negative; clamp at 0 before log so the action doesn't
+            # pick up NaN.
             cash_ratio = env.cash / env.portfolio_value if env.portfolio_value > 0 else 0.0
-            cash_log_weight = np.log(cash_ratio + LOG_EPSILON)
+            cash_log_weight = np.log(max(cash_ratio, 0.0) + LOG_EPSILON)
             return np.append(asset_weights, cash_log_weight)
 
     def reset(self, seed: int = None):
@@ -202,13 +204,21 @@ class MinimumVarianceStrategy(BaselineStrategy):
             inv_cov = np.linalg.inv(cov_matrix)
             ones = np.ones(env.n_assets)
             weights = inv_cov @ ones
-            weights = weights / np.sum(weights)
+            # Unconstrained min-var can produce negative (short) weights when
+            # assets are strongly correlated. Our softmax environment is
+            # long-only, so clip negatives to zero before renormalising —
+            # otherwise log(negative + eps) poisons the action with NaN.
+            weights = np.maximum(weights, 0.0)
+            total = np.sum(weights)
+            if total <= 0:
+                raise np.linalg.LinAlgError("Clipped min-var weights sum to 0")
+            weights = weights / total
 
             # Convert to action (log for softmax) and add cash dimension
             asset_action = np.log(weights + LOG_EPSILON)
             return np.append(asset_action, self.cash_weight)
         except np.linalg.LinAlgError:
-            # If singular, fall back to equal weight
+            # If singular or degenerate, fall back to equal weight
             action = np.ones(env.n_assets + 1)
             action[-1] = self.cash_weight
             return action

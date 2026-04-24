@@ -16,18 +16,22 @@ class BaseMetrics:
 
     @staticmethod
     def _get_returns(portfolio_history: pd.DataFrame) -> np.ndarray:
-        """Extract or compute returns from portfolio history."""
+        """Extract or compute returns from portfolio history.
+
+        Drops NaN — PortfolioEnv's reset row has no 'return' key, so the first
+        element of the 'return' column materialises as NaN when the history is
+        framed. Leaving it in poisons downstream np.std / np.mean.
+        """
         if 'return' in portfolio_history.columns:
-            return portfolio_history['return'].values
-        else:
-            values = portfolio_history['value'].values
-            return np.diff(values) / values[:-1]
+            return portfolio_history['return'].dropna().values
+        values = portfolio_history['value'].values
+        return np.diff(values) / values[:-1]
 
 
 class ReturnMetrics(BaseMetrics):
     """Calculate return-based performance metrics."""
 
-    def calculate(self, values: np.ndarray, n_periods: int, periods_per_year: int = 252) -> Dict[str, float]:
+    def calculate(self, values: np.ndarray, n_periods: int, periods_per_year: int = TRADING_DAYS_PER_YEAR) -> Dict[str, float]:
         """
         Calculate return metrics.
 
@@ -50,7 +54,7 @@ class ReturnMetrics(BaseMetrics):
         return (values[-1] / values[0]) - 1.0
 
     @staticmethod
-    def annualized_return(values: np.ndarray, n_periods: int, periods_per_year: int = 252) -> float:
+    def annualized_return(values: np.ndarray, n_periods: int, periods_per_year: int = TRADING_DAYS_PER_YEAR) -> float:
         """Calculate annualized return."""
         total_return = (values[-1] / values[0]) - 1.0
         n_years = n_periods / periods_per_year
@@ -72,7 +76,7 @@ class RiskMetrics(BaseMetrics):
         self.risk_free_rate = risk_free_rate
         self.daily_rf_rate = risk_free_rate / TRADING_DAYS_PER_YEAR
 
-    def calculate(self, returns: np.ndarray, periods_per_year: int = 252) -> Dict[str, float]:
+    def calculate(self, returns: np.ndarray, periods_per_year: int = TRADING_DAYS_PER_YEAR) -> Dict[str, float]:
         """
         Calculate risk metrics.
 
@@ -90,14 +94,14 @@ class RiskMetrics(BaseMetrics):
             'downside_deviation': self.downside_deviation(returns, periods_per_year)
         }
 
-    def sharpe_ratio(self, returns: np.ndarray, periods_per_year: int = 252) -> float:
+    def sharpe_ratio(self, returns: np.ndarray, periods_per_year: int = TRADING_DAYS_PER_YEAR) -> float:
         """Calculate Sharpe ratio."""
         excess_returns = returns - self.daily_rf_rate
         if len(excess_returns) > 1 and np.std(excess_returns) > 0:
             return np.sqrt(periods_per_year) * np.mean(excess_returns) / np.std(excess_returns)
         return 0.0
 
-    def sortino_ratio(self, returns: np.ndarray, periods_per_year: int = 252) -> float:
+    def sortino_ratio(self, returns: np.ndarray, periods_per_year: int = TRADING_DAYS_PER_YEAR) -> float:
         """Calculate Sortino ratio."""
         excess_returns = returns - self.daily_rf_rate
         downside_returns = excess_returns[excess_returns < 0]
@@ -109,13 +113,13 @@ class RiskMetrics(BaseMetrics):
         return 0.0
 
     @staticmethod
-    def volatility(returns: np.ndarray, periods_per_year: int = 252) -> float:
+    def volatility(returns: np.ndarray, periods_per_year: int = TRADING_DAYS_PER_YEAR) -> float:
         """Calculate annualized volatility."""
         if len(returns) > 1:
             return np.std(returns) * np.sqrt(periods_per_year)
         return 0.0
 
-    def downside_deviation(self, returns: np.ndarray, periods_per_year: int = 252) -> float:
+    def downside_deviation(self, returns: np.ndarray, periods_per_year: int = TRADING_DAYS_PER_YEAR) -> float:
         """Calculate annualized downside deviation."""
         excess_returns = returns - self.daily_rf_rate
         downside_returns = excess_returns[excess_returns < 0]
@@ -127,7 +131,7 @@ class RiskMetrics(BaseMetrics):
 class DrawdownMetrics(BaseMetrics):
     """Calculate drawdown-based metrics."""
 
-    def calculate(self, values: np.ndarray, n_periods: int, periods_per_year: int = 252) -> Dict[str, float]:
+    def calculate(self, values: np.ndarray, n_periods: int, periods_per_year: int = TRADING_DAYS_PER_YEAR) -> Dict[str, float]:
         """
         Calculate drawdown metrics.
 
@@ -155,7 +159,7 @@ class DrawdownMetrics(BaseMetrics):
         """Calculate maximum drawdown (the minimum of the drawdown series)."""
         return float(np.min(DrawdownMetrics.drawdown_series(values)))
 
-    def calmar_ratio(self, values: np.ndarray, n_periods: int, periods_per_year: int = 252) -> float:
+    def calmar_ratio(self, values: np.ndarray, n_periods: int, periods_per_year: int = TRADING_DAYS_PER_YEAR) -> float:
         """Calculate Calmar ratio (annualized return / max drawdown)."""
         ann_return = ReturnMetrics.annualized_return(values, n_periods, periods_per_year)
         max_dd = abs(self.max_drawdown(values))
@@ -247,7 +251,7 @@ class BaselineComparisonMetrics(BaseMetrics):
     """Calculate metrics comparing portfolio to baseline."""
 
     def calculate(self, returns: np.ndarray, baseline_returns: np.ndarray,
-                  periods_per_year: int = 252) -> Dict[str, float]:
+                  periods_per_year: int = TRADING_DAYS_PER_YEAR) -> Dict[str, float]:
         """
         Calculate baseline comparison metrics.
 
@@ -266,7 +270,7 @@ class BaselineComparisonMetrics(BaseMetrics):
         }
 
     @staticmethod
-    def alpha(returns: np.ndarray, baseline_returns: np.ndarray, periods_per_year: int = 252) -> float:
+    def alpha(returns: np.ndarray, baseline_returns: np.ndarray, periods_per_year: int = TRADING_DAYS_PER_YEAR) -> float:
         """Calculate alpha vs baseline."""
         if len(returns) != len(baseline_returns):
             raise ValueError("Returns and baseline must have same length")
@@ -287,7 +291,7 @@ class BaselineComparisonMetrics(BaseMetrics):
         return 0.0
 
     @staticmethod
-    def information_ratio(returns: np.ndarray, baseline_returns: np.ndarray, periods_per_year: int = 252) -> float:
+    def information_ratio(returns: np.ndarray, baseline_returns: np.ndarray, periods_per_year: int = TRADING_DAYS_PER_YEAR) -> float:
         """Calculate information ratio vs baseline."""
         if len(returns) != len(baseline_returns):
             raise ValueError("Returns and baseline must have same length")

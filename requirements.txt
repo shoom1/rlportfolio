@@ -2,9 +2,8 @@
 stable-baselines3[extra]>=2.7.0
 gymnasium>=1.0.0
 
-# Data Sources
-yfinance>=0.2.36
-polygon-api-client>=1.12.5
+# Market data (shared SQLite-backed client)
+finbase
 
 # Technical Analysis
 pandas-ta>=0.4.25b

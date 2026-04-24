@@ -40,6 +40,5 @@ dependencies:
     # Technical Analysis (pip-only)
     - pandas-ta>=0.4.25b
 
-    # Data Sources
-    - yfinance>=0.2.36
-    - polygon-api-client>=1.12.5
+    # Market data (shared SQLite-backed client)
+    - finbase
