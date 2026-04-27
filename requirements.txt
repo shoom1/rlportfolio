@@ -6,10 +6,10 @@ gymnasium>=1.0.0
 finbase
 
 # Technical Analysis
-pandas-ta>=0.4.25b
+pandas-ta>=0.4.71b0
 
 # Data Processing
-numpy>=1.26,<2.0.0
+numpy>=2.2.6
 pandas>=2.2.2
 
 # Visualization

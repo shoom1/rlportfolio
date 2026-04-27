@@ -137,10 +137,11 @@ For a rigorous OOS assessment across market regimes — trains a fresh agent on 
 conda run -n rlportfolio python -m evaluation.walk_forward \
     --config configs/opt_c_div19.yaml \
     --t-min-days 756 --stride-days 63 \
+    --seeds 42 43 44 \
     --output results/walk_forward.csv
 ```
 
-Produces a per-fold CSV (agent + baselines on each disjoint test window) and an aggregate summary (mean/std Sharpe, hit rate, regime split). The last 6 months of each fold's train window are reserved for model selection via `EvalCallback`, so the test window is never seen during training. Programmatic API in `evaluation.walk_forward.WalkForwardEvaluator`; see `examples/walk_forward.py` for a minimal driver.
+Produces a per-fold/per-seed CSV (agent + baselines on each disjoint test window), records failed runs for investigation, and prints aggregate run-level and fold-mean Sharpe / hit-rate summaries. The last 6 months of each fold's train window are reserved for model selection via `EvalCallback`, so the test window is never seen during training. Programmatic API in `evaluation.walk_forward.WalkForwardEvaluator`; see `examples/walk_forward.py` for a minimal driver.
 
 ## Project Structure
 
@@ -187,7 +188,10 @@ rlportfolio/
 - **State Space**: Market features (prices, indicators) + current portfolio state (weights, cash)
 - **Action Space**: Continuous portfolio weights (normalized via softmax)
 - **Reward**: Configurable (Sharpe ratio, returns, risk-adjusted, etc.)
-- **Transaction Costs**: Realistic trading costs applied during rebalancing
+- **Transaction Costs**: Proportional costs are applied during rebalancing.
+  Slippage defaults to zero for backward compatibility; custom cost models can
+  use fixed, volume-based, or spread-based slippage, with `volume`,
+  `bid_ask_spread`, or `spread` columns passed into trade records when present.
 
 ### Training
 
@@ -297,10 +301,11 @@ Run the walk-forward harness on your universe of choice to generate per-fold met
 
 ```bash
 conda run -n rlportfolio python -m evaluation.walk_forward \
-    --config configs/opt_c_div19.yaml
+    --config configs/opt_c_div19.yaml \
+    --seeds 42 43 44
 ```
 
-Outputs a per-fold CSV and prints aggregate Sharpe / hit-rate / bull-vs-bear split. Quarterly protocol with 3-year minimum train, 1-quarter stride and disjoint test windows, 6-month in-sample selection slice. See `evaluation/walk_forward.py` for all knobs.
+Outputs a per-fold/per-seed CSV and prints aggregate run-level and fold-mean Sharpe / hit-rate summaries. Quarterly protocol with 3-year minimum train, 1-quarter stride and disjoint test windows, 6-month in-sample selection slice. See `evaluation/walk_forward.py` for all knobs.
 
 ## Requirements
 

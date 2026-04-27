@@ -39,6 +39,21 @@ class TestRebalancingBugFix:
         )
         return env
 
+    @pytest.fixture
+    def costed_env(self, env_data, sample_tickers):
+        """Create an environment with transaction costs enabled."""
+        feature_cols = ['returns', 'close', 'sma_20']
+        env = PortfolioEnv(
+            data=env_data,
+            feature_columns=feature_cols,
+            tickers=sample_tickers,
+            initial_balance=10000.0,
+            transaction_cost=0.001,
+            reward_function=SimpleReturnReward(),
+            window_size=5
+        )
+        return env
+
     def test_rebalancing_cash_ratio_applied_once(self, simple_env):
         """
         Test that cash ratio is applied exactly once, not twice.
@@ -88,10 +103,10 @@ class TestRebalancingBugFix:
             f"Total allocation {total_allocation:.4f} should be 1.0"
 
     def test_rebalancing_with_high_cash(self, simple_env):
-        """Test rebalancing with high cash allocation (50%)."""
+        """Test rebalancing with a balanced cash allocation."""
         obs, info = simple_env.reset()
 
-        # Action requesting roughly 50% cash
+        # Equal logits request 25% cash for three assets plus cash.
         action = np.array([1.0, 1.0, 1.0, 1.0], dtype=np.float32)
 
         # Apply softmax
@@ -117,10 +132,10 @@ class TestRebalancingBugFix:
             f"Total allocation {cash_ratio + asset_ratio:.4f} should be 1.0"
 
     def test_rebalancing_with_low_cash(self, simple_env):
-        """Test rebalancing with low cash allocation (~5%)."""
+        """Test rebalancing with a near-zero cash allocation."""
         obs, info = simple_env.reset()
 
-        # Action requesting roughly 5% cash (very negative weight for cash)
+        # Very negative cash logit requests only a tiny cash allocation.
         action = np.array([1.0, 1.0, 1.0, -5.0], dtype=np.float32)
 
         # Apply softmax
@@ -143,8 +158,36 @@ class TestRebalancingBugFix:
         assert np.isclose(cash_ratio + asset_ratio, 1.0, atol=0.01), \
             f"Total allocation {cash_ratio + asset_ratio:.4f} should be 1.0"
 
-        # Cash should be low (~1-5%)
+        # Cash should be low.
         assert cash_ratio < 0.1, f"Cash ratio {cash_ratio:.4f} should be less than 10%"
+
+    def test_rebalancing_prefunds_transaction_costs(self, costed_env):
+        """Transaction costs should reduce investable value, not create margin."""
+        obs, info = costed_env.reset()
+
+        action = np.array([1.0, 1.0, 1.0, -5.0], dtype=np.float32)
+        normalized = costed_env._softmax(action)
+        target_weights = normalized[:-1]
+        target_cash_ratio = normalized[-1]
+
+        prices = costed_env._get_prices(costed_env.current_step)
+        pre_trade_value = costed_env.cash + np.sum(costed_env.holdings * prices)
+
+        transaction_cost = costed_env._rebalance_portfolio(
+            target_weights, prices, pre_trade_value, target_cash_ratio
+        )
+
+        asset_value = np.sum(costed_env.holdings * prices)
+        post_trade_value = costed_env.cash + asset_value
+
+        assert transaction_cost > target_cash_ratio * pre_trade_value
+        assert costed_env.cash >= 0.0
+        assert np.isclose(post_trade_value + transaction_cost, pre_trade_value, atol=1e-6)
+        assert np.isclose(
+            costed_env.cash / post_trade_value,
+            target_cash_ratio,
+            atol=1e-6
+        )
 
     def test_asset_weights_correctly_distributed(self, simple_env):
         """Test that asset weights are correctly distributed among assets."""

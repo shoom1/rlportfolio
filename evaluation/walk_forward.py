@@ -1,10 +1,11 @@
 """Walk-forward out-of-sample evaluation harness.
 
 Trains a fresh SB3 agent on each fold's expanding window and backtests it
-on the next disjoint test slice. The last `selection_days` of each fold's
-train window are held out as an in-sample validation set used by
-`EvalCallback` to save `best_model`. The test window is **never** touched
-during training or model selection.
+on the next disjoint test slice. Each fold can be repeated across multiple
+training seeds. The last `selection_days` of each fold's train window are
+held out as an in-sample validation set used by `EvalCallback` to save
+`best_model`. The test window is **never** touched during training or model
+selection.
 
 Complements `WalkForwardBacktestStrategy` in `evaluation.backtest_strategies`:
 that class rolls a pre-trained agent through windows without retraining,
@@ -24,6 +25,7 @@ CLI use::
 
     python -m evaluation.walk_forward --config configs/opt_c_div19.yaml \\
         --t-min-days 756 --stride-days 63 \\
+        --seeds 42 43 44 \\
         --output results/walk_forward.csv
 """
 
@@ -32,6 +34,7 @@ from __future__ import annotations
 import os
 import sys
 import tempfile
+import traceback
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -83,6 +86,7 @@ class WalkForwardConfig:
     selection_days: int = 126      # in-sample val for EvalCallback
     n_workers: int = 6
     seed: int = 42
+    seeds: Optional[List[int]] = None
     baselines: List[str] = field(
         default_factory=lambda: ['buy_and_hold', 'equal_weight']
     )
@@ -100,6 +104,12 @@ class WalkForwardConfig:
             )
         if self.n_workers < 1:
             raise ValueError(f"n_workers must be >= 1, got {self.n_workers}")
+        if self.seeds is not None:
+            if len(self.seeds) == 0:
+                raise ValueError("seeds must contain at least one seed")
+            self.seeds = [int(seed) for seed in self.seeds]
+            if len(set(self.seeds)) != len(self.seeds):
+                raise ValueError(f"seeds must be unique, got {self.seeds}")
         if self.t_min_days <= self.selection_days:
             raise ValueError(
                 f"t_min_days ({self.t_min_days}) must exceed selection_days "
@@ -113,6 +123,10 @@ class WalkForwardConfig:
                 f"Unknown baselines: {unknown}. "
                 f"Available: {sorted(known)}"
             )
+
+    def seed_values(self) -> List[int]:
+        """Training seeds to run per fold."""
+        return [self.seed] if self.seeds is None else list(self.seeds)
 
 
 # --------- Module-level state used by worker processes -----------
@@ -163,16 +177,66 @@ def _slice_by_idx(i_start: int, i_end: int) -> pd.DataFrame:
     return _ENV_DATA[(dates >= start) & (dates <= end)]
 
 
+def _date_iso(all_dates: pd.DatetimeIndex, idx: int) -> str:
+    return pd.Timestamp(all_dates[idx]).date().isoformat()
+
+
+def _fold_metadata_row(
+    fold: FoldSpec,
+    all_dates: pd.DatetimeIndex,
+    seed: Optional[int] = None,
+) -> Dict[str, Any]:
+    fold_idx, train_start, sel_start, test_start, test_end = fold
+    row = dict(
+        fold=fold_idx,
+        train_start=_date_iso(all_dates, train_start),
+        sel_start=_date_iso(all_dates, sel_start),
+        test_start=_date_iso(all_dates, test_start),
+        test_end=_date_iso(all_dates, test_end - 1),
+    )
+    if seed is not None:
+        row['seed'] = seed
+    return row
+
+
+def _failed_fold_row(
+    fold: FoldSpec,
+    all_dates: pd.DatetimeIndex,
+    exc: BaseException,
+    baselines: List[str],
+    seed: Optional[int] = None,
+) -> Dict[str, Any]:
+    row = _fold_metadata_row(fold, all_dates, seed=seed)
+    row.update(
+        status='failed',
+        agent_sharpe=np.nan,
+        agent_return=np.nan,
+        agent_dd=np.nan,
+        agent_vol=np.nan,
+        error_type=type(exc).__name__,
+        error_message=str(exc),
+        error_traceback=''.join(
+            traceback.format_exception(type(exc), exc, exc.__traceback__)
+        ),
+    )
+    for b in baselines:
+        row[f'{b}_sharpe'] = np.nan
+        row[f'{b}_return'] = np.nan
+    return row
+
+
 def _run_fold_worker(
     fold_idx: int,
     train_start: int,
     sel_start: int,
     test_start: int,
     test_end: int,
+    seed: Optional[int] = None,
 ) -> Dict[str, Any]:
     """Train+test one fold. Module-level so it's picklable by spawn workers."""
     from stable_baselines3.common.callbacks import EvalCallback
 
+    run_seed = _WF.seed if seed is None else int(seed)
     window = _CFG.environment.window_size
     # Include `window` prior days in sel/test slices so the env can emit an
     # observation at step 0 of each slice.
@@ -197,7 +261,7 @@ def _run_fold_worker(
             policy=_CFG.agent.policy,
             env=_make_env(train_data),
             verbose=0,
-            seed=_WF.seed,
+            seed=run_seed,
             **_CFG.agent.extra,
         )
         agent.learn(
@@ -213,16 +277,20 @@ def _run_fold_worker(
     bt.run_agent(model, _make_env(test_data), name='agent')
     agent_m = bt.compute_metrics('agent')
 
-    row: Dict[str, Any] = dict(
-        fold=fold_idx,
-        train_start=_ALL_DATES[train_start].date().isoformat(),
-        sel_start=_ALL_DATES[sel_start].date().isoformat(),
-        test_start=_ALL_DATES[test_start].date().isoformat(),
-        test_end=_ALL_DATES[test_end - 1].date().isoformat(),
+    row: Dict[str, Any] = _fold_metadata_row(
+        (fold_idx, train_start, sel_start, test_start, test_end),
+        _ALL_DATES,
+        seed=run_seed,
+    )
+    row.update(
+        status='success',
         agent_sharpe=agent_m['sharpe_ratio'],
         agent_return=agent_m['total_return'],
         agent_dd=agent_m['max_drawdown'],
         agent_vol=agent_m['volatility'],
+        error_type='',
+        error_message='',
+        error_traceback='',
     )
     for b in _WF.baselines:
         bt.run_baseline(_make_env(test_data), b)
@@ -236,9 +304,9 @@ class WalkForwardEvaluator:
     """Expanding-window walk-forward training + OOS backtesting.
 
     Prepares env data once, then dispatches one training+backtest job per
-    fold across a pool of processes. Returns a per-fold DataFrame containing
-    the agent's Sharpe/return/DD/vol on its disjoint test window, plus the
-    same metrics for each requested baseline on that same window.
+    fold/seed pair across a pool of processes. Returns a per-run DataFrame
+    containing the agent's Sharpe/return/DD/vol on its disjoint test window,
+    plus the same metrics for each requested baseline on that same window.
 
     See the module docstring for how train / model-selection / test windows
     are laid out.
@@ -310,9 +378,10 @@ class WalkForwardEvaluator:
         return folds
 
     def run(self) -> pd.DataFrame:
-        """Run all folds in parallel; return a sorted per-fold DataFrame."""
+        """Run all fold/seed jobs in parallel; return a sorted DataFrame."""
         env_data, feat_cols, all_dates = self.prepare_data()
         folds = self.compute_folds(self.wf, len(all_dates))
+        seeds = self.wf.seed_values()
         if not folds:
             raise RuntimeError(
                 f"No folds fit in the available data: need at least "
@@ -320,7 +389,8 @@ class WalkForwardEvaluator:
                 f"got {len(all_dates)}"
             )
         print(
-            f"\n{len(folds)} folds: "
+            f"\n{len(folds)} folds x {len(seeds)} seeds = "
+            f"{len(folds) * len(seeds)} runs: "
             f"first test {all_dates[self.wf.t_min_days].date()}, "
             f"last test ends {all_dates[folds[-1][4] - 1].date()}",
             flush=True,
@@ -333,13 +403,30 @@ class WalkForwardEvaluator:
             initializer=_worker_init,
             initargs=(env_data, feat_cols, all_dates, self.cfg, self.wf),
         ) as ex:
-            futures = {ex.submit(_run_fold_worker, *fold): fold[0] for fold in folds}
+            futures = {
+                ex.submit(_run_fold_worker, *fold, seed): (fold, seed)
+                for fold in folds
+                for seed in seeds
+            }
             for fut in as_completed(futures):
-                fold_idx = futures[fut]
+                fold, seed = futures[fut]
+                fold_idx = fold[0]
                 try:
                     r = fut.result()
                 except Exception as e:
-                    print(f"[fold {fold_idx}] FAILED: {e!r}", flush=True)
+                    print(
+                        f"[fold {fold_idx} seed {seed}] FAILED: {e!r}",
+                        flush=True,
+                    )
+                    rows.append(
+                        _failed_fold_row(
+                            fold,
+                            all_dates,
+                            e,
+                            self.wf.baselines,
+                            seed=seed,
+                        )
+                    )
                     continue
                 rows.append(r)
                 base_strs = "  ".join(
@@ -347,19 +434,28 @@ class WalkForwardEvaluator:
                     for b in self.wf.baselines
                 )
                 print(
-                    f"[fold {r['fold']:3d}] {r['test_start']} -> {r['test_end']}  "
+                    f"[fold {r['fold']:3d} seed {r['seed']}] "
+                    f"{r['test_start']} -> {r['test_end']}  "
                     f"agent Sh={r['agent_sharpe']:+.2f} R={r['agent_return']:+.2%}  "
                     f"{base_strs}",
                     flush=True,
                 )
 
-        return pd.DataFrame(rows).sort_values('fold').reset_index(drop=True)
+        sort_cols = ['fold', 'seed'] if rows and 'seed' in rows[0] else ['fold']
+        return pd.DataFrame(rows).sort_values(sort_cols).reset_index(drop=True)
 
     @staticmethod
     def summarise(df: pd.DataFrame, baselines: List[str]) -> Dict[str, Any]:
         """Aggregate mean / std / median / min / max Sharpe and hit rate."""
-        def _agg(col: str) -> Dict[str, float]:
-            s = df[col].replace([np.inf, -np.inf], np.nan).dropna()
+        if 'status' in df.columns:
+            successful = df[df['status'] == 'success']
+            n_failed = int((df['status'] == 'failed').sum())
+        else:
+            successful = df
+            n_failed = 0
+
+        def _agg_series(s: pd.Series) -> Dict[str, float]:
+            s = s.replace([np.inf, -np.inf], np.nan).dropna()
             return {
                 'mean': float(s.mean()),
                 'std': float(s.std()),
@@ -368,32 +464,87 @@ class WalkForwardEvaluator:
                 'max': float(s.max()),
             }
 
+        def _agg(col: str) -> Dict[str, float]:
+            return _agg_series(successful[col])
+
+        def _fold_mean_agg(col: str) -> Dict[str, float]:
+            if 'fold' not in successful.columns:
+                return _agg(col)
+            s = successful[col].replace([np.inf, -np.inf], np.nan)
+            return _agg_series(s.groupby(successful['fold']).mean())
+
+        n_runs = len(df)
+        n_successful_runs = len(successful)
+        n_folds = int(df['fold'].nunique()) if 'fold' in df.columns else n_runs
+        n_successful_folds = (
+            int(successful['fold'].nunique())
+            if 'fold' in successful.columns
+            else n_successful_runs
+        )
+        n_failed_folds = (
+            int(df.loc[df.get('status', '') == 'failed', 'fold'].nunique())
+            if 'fold' in df.columns and 'status' in df.columns
+            else n_failed
+        )
+
         out: Dict[str, Any] = {
-            'n_folds': len(df),
+            'n_runs': n_runs,
+            'n_successful_runs': n_successful_runs,
+            'n_failed_runs': n_failed,
+            'n_folds': n_folds,
+            'n_successful_folds': n_successful_folds,
+            'n_failed_folds': n_failed_folds,
             'agent_sharpe': _agg('agent_sharpe'),
+            'agent_sharpe_by_fold': _fold_mean_agg('agent_sharpe'),
         }
         for b in baselines:
             col = f'{b}_sharpe'
             if col not in df.columns:
                 continue
             out[f'{b}_sharpe'] = _agg(col)
-            out[f'{b}_hit_rate'] = float((df['agent_sharpe'] > df[col]).mean())
+            out[f'{b}_sharpe_by_fold'] = _fold_mean_agg(col)
+            comparable = (
+                successful[['agent_sharpe', col]]
+                .replace([np.inf, -np.inf], np.nan)
+                .dropna()
+            )
+            hit_rate = (
+                (comparable['agent_sharpe'] > comparable[col]).mean()
+                if len(comparable) > 0
+                else np.nan
+            )
+            out[f'{b}_hit_rate'] = float(hit_rate)
         return out
 
 
 # ------------------------------ CLI ---------------------------------
 
 def _format_summary(df: pd.DataFrame, stats: Dict[str, Any], baselines: List[str]) -> str:
+    n_runs = stats.get('n_runs', stats['n_folds'])
+    n_successful_runs = stats.get('n_successful_runs', stats['n_successful_folds'])
+    n_failed_runs = stats.get('n_failed_runs', stats.get('n_failed_folds', 0))
     lines = [
         "=" * 72,
-        f"AGGREGATE over {stats['n_folds']} folds",
+        f"AGGREGATE over {n_successful_runs}/{n_runs} successful runs "
+        f"across {stats['n_folds']} folds",
         "=" * 72,
     ]
+    if n_failed_runs:
+        lines.append(
+            f"failed runs recorded: {n_failed_runs} "
+            f"across {stats.get('n_failed_folds', n_failed_runs)} folds"
+        )
     a = stats['agent_sharpe']
     lines.append(
         f"agent Sharpe: mean={a['mean']:+.3f}  std={a['std']:.3f}  "
         f"median={a['median']:+.3f}  min={a['min']:+.3f}  max={a['max']:+.3f}"
     )
+    if 'agent_sharpe_by_fold' in stats:
+        af = stats['agent_sharpe_by_fold']
+        lines.append(
+            f"agent fold-mean Sharpe: mean={af['mean']:+.3f}  std={af['std']:.3f}  "
+            f"median={af['median']:+.3f}"
+        )
     for b in baselines:
         key = f'{b}_sharpe'
         if key not in stats:
@@ -401,7 +552,7 @@ def _format_summary(df: pd.DataFrame, stats: Dict[str, Any], baselines: List[str
         s = stats[key]
         lines.append(
             f"{b:>20s} Sharpe: mean={s['mean']:+.3f}  median={s['median']:+.3f}   "
-            f"agent > {b}: {stats[f'{b}_hit_rate']:.1%} of folds"
+            f"agent > {b}: {stats[f'{b}_hit_rate']:.1%} of successful runs"
         )
     return "\n".join(lines)
 
@@ -425,7 +576,10 @@ def _main() -> None:
     parser.add_argument('--selection-days', type=int, default=126,
                         help="Tail of train reserved for EvalCallback (default: 126 = 6 months).")
     parser.add_argument('--n-workers', type=int, default=6)
-    parser.add_argument('--seed', type=int, default=42)
+    parser.add_argument('--seed', type=int, default=42,
+                        help="Single training seed used when --seeds is omitted.")
+    parser.add_argument('--seeds', nargs='+', type=int, default=None,
+                        help="Optional list of training seeds to run per fold.")
     parser.add_argument('--baselines', nargs='+',
                         default=['buy_and_hold', 'equal_weight'])
     parser.add_argument('--output', type=Path, default=None,
@@ -441,6 +595,7 @@ def _main() -> None:
         selection_days=args.selection_days,
         n_workers=args.n_workers,
         seed=args.seed,
+        seeds=args.seeds,
         baselines=args.baselines,
     )
     evaluator = WalkForwardEvaluator(

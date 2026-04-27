@@ -104,15 +104,15 @@ class TestBuyAndHoldStrategy:
         assert np.allclose(action[:-1], np.ones(env.n_assets))
         assert action[-1] == strategy.cash_weight
 
-    def test_handles_negative_cash_after_transaction_costs(self):
-        """Transaction costs can drive cash slightly negative. The strategy
-        must still produce a valid (non-NaN) action."""
+    def test_handles_unexpected_negative_cash(self):
+        """The strategy must still produce a valid action if a custom or
+        externally mutated env reports negative cash."""
         strategy = BuyAndHoldStrategy()
 
         class MockEnv:
             n_assets = 3
             weights = np.array([0.4, 0.35, 0.25])
-            cash = -5.0  # negative after txn costs ate into it
+            cash = -5.0
             portfolio_value = 10000.0
 
         env = MockEnv()
