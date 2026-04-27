@@ -16,6 +16,7 @@ differs between PPO/SAC/A2C.
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
@@ -30,6 +31,68 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
 @dataclass
+class UniverseConfig:
+    """Universe construction policy.
+
+    Only `static_current` is implemented today: the configured ticker list is
+    reused for every train/validation/test period. That is useful for controlled
+    engineering experiments, but it is not a survivorship-bias-free historical
+    index universe.
+    """
+
+    mode: str = 'static_current'
+    survivorship_bias: Optional[str] = None
+    membership_file: Optional[str] = None
+
+    SUPPORTED_MODES = ('static_current',)
+    RESERVED_MODES = ('point_in_time_index',)
+    STATIC_CURRENT_BIAS = 'known'
+
+    @classmethod
+    def from_dict(cls, d: Optional[Dict[str, Any]]) -> 'UniverseConfig':
+        if isinstance(d, cls):
+            return d
+        return cls(**(d or {}))
+
+    def __post_init__(self):
+        if self.mode in self.RESERVED_MODES:
+            raise ValueError(
+                "data.universe.mode='point_in_time_index' is reserved for "
+                "future point-in-time membership support. Only "
+                "'static_current' is currently implemented."
+            )
+        if self.mode not in self.SUPPORTED_MODES:
+            raise ValueError(
+                f"data.universe.mode must be one of {list(self.SUPPORTED_MODES)}, "
+                f"got {self.mode!r}"
+            )
+        if self.membership_file is not None:
+            raise ValueError(
+                "data.universe.membership_file is only valid for "
+                "point_in_time_index, which is not implemented yet"
+            )
+        if self.survivorship_bias is None:
+            self.survivorship_bias = self.STATIC_CURRENT_BIAS
+        elif self.survivorship_bias != self.STATIC_CURRENT_BIAS:
+            raise ValueError(
+                "data.universe.survivorship_bias must be 'known' for "
+                "mode='static_current'; the label is derived from mode"
+            )
+
+    def metadata(self, tickers: List[str]) -> Dict[str, Any]:
+        """Stable metadata for experiment outputs and trackers."""
+        ticker_key = "\n".join(tickers)
+        tickers_hash = hashlib.sha256(ticker_key.encode('utf-8')).hexdigest()[:12]
+        return {
+            'universe_mode': self.mode,
+            'survivorship_bias': self.survivorship_bias,
+            'n_assets': len(tickers),
+            'tickers_hash': tickers_hash,
+            'tickers': ",".join(tickers),
+        }
+
+
+@dataclass
 class DataConfig:
     """Market-data parameters."""
 
@@ -38,14 +101,26 @@ class DataConfig:
     )
     train_days: int = 730
     val_days: int = 180
+    universe: UniverseConfig = field(default_factory=UniverseConfig)
+
+    @classmethod
+    def from_dict(cls, d: Optional[Dict[str, Any]]) -> 'DataConfig':
+        d = dict(d or {})
+        d['universe'] = UniverseConfig.from_dict(d.get('universe'))
+        return cls(**d)
 
     def __post_init__(self):
         if not self.tickers:
             raise ValueError("data.tickers must be non-empty")
+        if isinstance(self.universe, dict):
+            self.universe = UniverseConfig.from_dict(self.universe)
         if self.train_days <= 0:
             raise ValueError(f"data.train_days must be > 0, got {self.train_days}")
         if self.val_days <= 0:
             raise ValueError(f"data.val_days must be > 0, got {self.val_days}")
+
+    def universe_metadata(self) -> Dict[str, Any]:
+        return self.universe.metadata(self.tickers)
 
 
 @dataclass
@@ -147,7 +222,7 @@ class TrainingConfig:
                 f"Allowed: {sorted(cls._ALLOWED_SECTIONS)}"
             )
         return cls(
-            data=DataConfig(**d.get('data', {})),
+            data=DataConfig.from_dict(d.get('data', {})),
             environment=EnvironmentConfig(**d.get('environment', {})),
             agent=AgentConfig.from_dict(d.get('agent', {})),
             training=TrainingLoopConfig(**d.get('training', {})),

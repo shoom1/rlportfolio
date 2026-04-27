@@ -6,6 +6,7 @@ import pytest
 
 import evaluation.walk_forward as walk_forward_module
 from evaluation.walk_forward import WalkForwardConfig, WalkForwardEvaluator
+from training.config import DataConfig, TrainingConfig
 
 
 # ---------------- WalkForwardConfig validation ----------------
@@ -102,6 +103,28 @@ class TestComputeFolds:
         assert len(folds) == 4
         # Verify overlap
         assert folds[0][4] > folds[1][3]  # fold 0 test_end > fold 1 test_start
+
+
+# ---------------- universe metadata ----------------
+
+class TestUniverseMetadata:
+
+    def test_fold_rows_include_static_current_universe_metadata(self):
+        all_dates = pd.date_range('2024-01-01', periods=5, freq='D')
+        cfg = TrainingConfig(data=DataConfig(tickers=['AAPL', 'MSFT']))
+
+        row = walk_forward_module._fold_metadata_row(
+            (0, 0, 1, 2, 3),
+            all_dates,
+            seed=7,
+            cfg=cfg,
+        )
+
+        assert row['universe_mode'] == 'static_current'
+        assert row['survivorship_bias'] == 'known'
+        assert row['n_assets'] == 2
+        assert row['tickers'] == 'AAPL,MSFT'
+        assert len(row['tickers_hash']) == 12
 
 
 # ---------------- summarise ----------------

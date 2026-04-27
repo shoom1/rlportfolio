@@ -8,6 +8,9 @@ data:
     - GOOGL
     - AMZN
     - NVDA
+  universe:
+    mode: static_current
+    survivorship_bias: known
   train_days: 730        # 2 years of training data
   val_days: 180          # 6 months of validation data
 

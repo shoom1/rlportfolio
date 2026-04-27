@@ -185,6 +185,7 @@ def _fold_metadata_row(
     fold: FoldSpec,
     all_dates: pd.DatetimeIndex,
     seed: Optional[int] = None,
+    cfg: Optional[TrainingConfig] = None,
 ) -> Dict[str, Any]:
     fold_idx, train_start, sel_start, test_start, test_end = fold
     row = dict(
@@ -196,6 +197,12 @@ def _fold_metadata_row(
     )
     if seed is not None:
         row['seed'] = seed
+    if (
+        cfg is not None
+        and hasattr(cfg, 'data')
+        and hasattr(cfg.data, 'universe_metadata')
+    ):
+        row.update(cfg.data.universe_metadata())
     return row
 
 
@@ -205,8 +212,9 @@ def _failed_fold_row(
     exc: BaseException,
     baselines: List[str],
     seed: Optional[int] = None,
+    cfg: Optional[TrainingConfig] = None,
 ) -> Dict[str, Any]:
-    row = _fold_metadata_row(fold, all_dates, seed=seed)
+    row = _fold_metadata_row(fold, all_dates, seed=seed, cfg=cfg)
     row.update(
         status='failed',
         agent_sharpe=np.nan,
@@ -281,6 +289,7 @@ def _run_fold_worker(
         (fold_idx, train_start, sel_start, test_start, test_end),
         _ALL_DATES,
         seed=run_seed,
+        cfg=_CFG,
     )
     row.update(
         status='success',
@@ -337,6 +346,19 @@ class WalkForwardEvaluator:
         """
         print(f"Fetching {self.cfg.data.tickers}\n"
               f"  {self.data_start} -> {self.data_end}", flush=True)
+        universe = self.cfg.data.universe
+        print(
+            f"Universe mode: {universe.mode} "
+            f"(survivorship_bias={universe.survivorship_bias})",
+            flush=True,
+        )
+        if universe.mode == 'static_current':
+            print(
+                "WARNING: static_current reuses the configured ticker list for "
+                "every fold; historical index survivorship bias is known and "
+                "not corrected.",
+                flush=True,
+            )
         raw = self.data_fetcher.fetch_data(
             self.cfg.data.tickers,
             start_date=self.data_start,
@@ -425,6 +447,7 @@ class WalkForwardEvaluator:
                             e,
                             self.wf.baselines,
                             seed=seed,
+                            cfg=self.cfg,
                         )
                     )
                     continue
