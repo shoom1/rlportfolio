@@ -8,7 +8,7 @@ dependencies:
   - python=3.12
 
   # Core scientific computing
-  - numpy>=1.26,<2.0.0
+  - numpy>=2.2.6
   - pandas>=2.2.2
   - scipy>=1.10.0
 
@@ -38,7 +38,13 @@ dependencies:
   - pip
   - pip:
     # Technical Analysis (pip-only)
-    - pandas-ta>=0.4.25b
+    - pandas-ta>=0.4.71b0
 
     # Market data (shared SQLite-backed client)
     - finbase
+
+variables:
+  # pandas-ta 0.4.71b0 imports numba-jitted helpers with cache=True; on some
+  # macOS/conda installs numba cannot locate those package files for caching
+  # during import. Disabling JIT keeps imports and tests reproducible.
+  NUMBA_DISABLE_JIT: "1"

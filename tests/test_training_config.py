@@ -9,6 +9,7 @@ from training.config import (
     EnvironmentConfig,
     TrainingConfig,
     TrainingLoopConfig,
+    UniverseConfig,
 )
 
 
@@ -33,6 +34,37 @@ class TestDataConfigValidation:
     def test_non_positive_val_days_raises(self):
         with pytest.raises(ValueError, match="val_days"):
             DataConfig(tickers=['A'], val_days=-1)
+
+
+class TestUniverseConfigValidation:
+    def test_default_universe_is_static_current_with_known_bias(self):
+        cfg = UniverseConfig()
+        assert cfg.mode == 'static_current'
+        assert cfg.survivorship_bias == 'known'
+
+    def test_static_current_accepts_explicit_known_bias(self):
+        cfg = UniverseConfig(mode='static_current', survivorship_bias='known')
+        assert cfg.survivorship_bias == 'known'
+
+    def test_rejects_point_in_time_index_until_implemented(self):
+        with pytest.raises(ValueError, match="point_in_time_index"):
+            UniverseConfig(mode='point_in_time_index')
+
+    def test_rejects_membership_file_until_point_in_time_is_implemented(self):
+        with pytest.raises(ValueError, match="membership_file"):
+            UniverseConfig(membership_file='data/sp500_membership.csv')
+
+    def test_rejects_static_current_with_controlled_bias_claim(self):
+        with pytest.raises(ValueError, match="survivorship_bias"):
+            UniverseConfig(mode='static_current', survivorship_bias='controlled')
+
+    def test_metadata_labels_static_current_universe(self):
+        metadata = UniverseConfig().metadata(['MSFT', 'AAPL'])
+        assert metadata['universe_mode'] == 'static_current'
+        assert metadata['survivorship_bias'] == 'known'
+        assert metadata['n_assets'] == 2
+        assert metadata['tickers'] == 'MSFT,AAPL'
+        assert len(metadata['tickers_hash']) == 12
 
 
 class TestEnvironmentConfigValidation:
@@ -108,11 +140,26 @@ class TestFromDict:
         })
         assert cfg.environment.reward_function == 'sharpe'
         assert cfg.agent.algorithm == 'PPO'
+        assert cfg.data.universe.mode == 'static_current'
+        assert cfg.data.universe.survivorship_bias == 'known'
 
     def test_empty_dict_uses_all_defaults(self):
         """Empty dict is treated as all defaults (including default tickers)."""
         cfg = TrainingConfig.from_dict({})
         assert cfg.data.tickers  # default ticker list is non-empty
+
+    def test_nested_universe_config_parses(self):
+        cfg = TrainingConfig.from_dict({
+            'data': {
+                'tickers': ['AAPL', 'MSFT'],
+                'universe': {
+                    'mode': 'static_current',
+                    'survivorship_bias': 'known',
+                },
+            },
+        })
+        assert cfg.data.universe.mode == 'static_current'
+        assert cfg.data.universe.survivorship_bias == 'known'
 
 
 class TestFromYaml:
@@ -135,6 +182,8 @@ class TestFromYaml:
             yaml.safe_dump(cfg.to_dict(), f)
         cfg2 = TrainingConfig.from_yaml(p)
         assert cfg2.data.tickers == cfg.data.tickers
+        assert cfg2.data.universe.mode == cfg.data.universe.mode
+        assert cfg2.data.universe.survivorship_bias == cfg.data.universe.survivorship_bias
         assert cfg2.environment.reward_function == cfg.environment.reward_function
         assert cfg2.agent.algorithm == cfg.agent.algorithm
 
@@ -148,3 +197,9 @@ class TestToDict:
         assert d['agent']['algorithm'] == 'SAC'
         assert d['agent']['buffer_size'] == 50000
         assert 'extra' not in d['agent']
+
+    def test_universe_config_roundtrips_to_dict(self):
+        cfg = TrainingConfig()
+        d = cfg.to_dict()
+        assert d['data']['universe']['mode'] == 'static_current'
+        assert d['data']['universe']['survivorship_bias'] == 'known'

@@ -137,10 +137,11 @@ For a rigorous OOS assessment across market regimes — trains a fresh agent on 
 conda run -n rlportfolio python -m evaluation.walk_forward \
     --config configs/opt_c_div19.yaml \
     --t-min-days 756 --stride-days 63 \
+    --seeds 42 43 44 \
     --output results/walk_forward.csv
 ```
 
-Produces a per-fold CSV (agent + baselines on each disjoint test window) and an aggregate summary (mean/std Sharpe, hit rate, regime split). The last 6 months of each fold's train window are reserved for model selection via `EvalCallback`, so the test window is never seen during training. Programmatic API in `evaluation.walk_forward.WalkForwardEvaluator`; see `examples/walk_forward.py` for a minimal driver.
+Produces a per-fold/per-seed CSV (agent + baselines on each disjoint test window), records failed runs for investigation, and prints aggregate run-level and fold-mean Sharpe / hit-rate summaries. The last 6 months of each fold's train window are reserved for model selection via `EvalCallback`, so the test window is never seen during training. Programmatic API in `evaluation.walk_forward.WalkForwardEvaluator`; see `examples/walk_forward.py` for a minimal driver.
 
 ## Project Structure
 
@@ -187,7 +188,10 @@ rlportfolio/
 - **State Space**: Market features (prices, indicators) + current portfolio state (weights, cash)
 - **Action Space**: Continuous portfolio weights (normalized via softmax)
 - **Reward**: Configurable (Sharpe ratio, returns, risk-adjusted, etc.)
-- **Transaction Costs**: Realistic trading costs applied during rebalancing
+- **Transaction Costs**: Proportional costs are applied during rebalancing.
+  Slippage defaults to zero for backward compatibility; custom cost models can
+  use fixed, volume-based, or spread-based slippage, with `volume`,
+  `bid_ask_spread`, or `spread` columns passed into trade records when present.
 
 ### Training
 
@@ -212,6 +216,9 @@ Configurations are stored in `configs/` as YAML files. Key parameters:
 ```yaml
 data:
   tickers: [AAPL, MSFT, GOOGL, AMZN, NVDA]
+  universe:
+    mode: static_current
+    survivorship_bias: known
   train_days: 730
 
 environment:
@@ -228,6 +235,12 @@ agent:
 training:
   total_timesteps: 100000
 ```
+
+`data.universe.mode: static_current` is the only supported universe policy
+today. It reuses the configured ticker list across every period and marks
+outputs with `survivorship_bias: known`; it does not reconstruct historical
+index membership. `point_in_time_index` is reserved for future support and
+fails validation instead of silently behaving like a static universe.
 
 ## Extending the Framework
 
@@ -265,6 +278,10 @@ class MyReward(RewardFunction):
 ### Add Custom Baseline Strategies
 
 ```python
+import numpy as np
+
+from environment.constants import CASH_SOFTMAX_BIAS
+from evaluation.backtest import Backtester
 from evaluation.baselines import BaselineStrategy
 
 class MyStrategy(BaselineStrategy):
@@ -272,8 +289,9 @@ class MyStrategy(BaselineStrategy):
         super().__init__('my_strategy')
 
     def get_action(self, env, step, **kwargs):
-        # Your strategy logic
-        return np.ones(env.n_assets)  # Equal weight example
+        action = np.ones(env.n_assets + 1)
+        action[-1] = CASH_SOFTMAX_BIAS
+        return action
 
 # Register it
 backtester = Backtester()
@@ -291,16 +309,17 @@ See `data/fetcher.py` for the thin adapter layer.
 
 ## Results
 
-Results are sensitive to universe, time period, and random seed. Single-window comparisons can overstate the RL edge — an honest assessment needs walk-forward across regimes.
+Results are sensitive to universe, time period, and random seed. Single-window comparisons can overstate the RL edge — an honest assessment needs walk-forward across regimes. Current configs use `static_current` universes, so index-style claims should be treated as survivorship-biased unless you provide a true point-in-time membership source outside this package.
 
 Run the walk-forward harness on your universe of choice to generate per-fold metrics:
 
 ```bash
 conda run -n rlportfolio python -m evaluation.walk_forward \
-    --config configs/opt_c_div19.yaml
+    --config configs/opt_c_div19.yaml \
+    --seeds 42 43 44
 ```
 
-Outputs a per-fold CSV and prints aggregate Sharpe / hit-rate / bull-vs-bear split. Quarterly protocol with 3-year minimum train, 1-quarter stride and disjoint test windows, 6-month in-sample selection slice. See `evaluation/walk_forward.py` for all knobs.
+Outputs a per-fold/per-seed CSV and prints aggregate run-level and fold-mean Sharpe / hit-rate summaries. Each row includes `universe_mode`, `survivorship_bias`, `n_assets`, and `tickers_hash` so downstream analysis keeps the universe assumption attached to the result. Quarterly protocol with 3-year minimum train, 1-quarter stride and disjoint test windows, 6-month in-sample selection slice. See `evaluation/walk_forward.py` for all knobs.
 
 ## Requirements
 

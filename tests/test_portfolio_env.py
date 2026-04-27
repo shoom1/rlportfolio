@@ -14,6 +14,20 @@ from data.features import FeatureEngineer
 class TestPortfolioEnv:
     """Tests for PortfolioEnv class."""
 
+    class CapturingCostModel:
+        """Cost model test double that records TradeInfo inputs."""
+
+        def __init__(self):
+            self.calls = []
+
+        def calculate_total_cost(self, trades):
+            self.calls.append(list(trades))
+            return {
+                'transaction_cost': 0.0,
+                'slippage': 0.0,
+                'total_cost': 0.0,
+            }
+
     @pytest.fixture
     def env_data(self, sample_ohlcv_data):
         """Create environment-ready data."""
@@ -196,6 +210,110 @@ class TestPortfolioEnv:
 
         assert simple_env.portfolio_value < simple_env.initial_balance or \
                simple_env.portfolio_value > simple_env.initial_balance
+
+    def test_trade_info_includes_volume_when_available(self, env_data, sample_tickers):
+        """Volume-aware slippage models should receive per-ticker daily volume."""
+        cost_model = self.CapturingCostModel()
+        env = PortfolioEnv(
+            data=env_data,
+            feature_columns=['returns', 'close', 'sma_20'],
+            tickers=sample_tickers,
+            initial_balance=10000.0,
+            cost_model=cost_model,
+            window_size=20
+        )
+        env.reset()
+        trade_date = env.dates[env.window_size]
+
+        env.step(np.ones(env.n_assets + 1))
+
+        assert cost_model.calls
+        volumes_by_ticker = {
+            trade.ticker: trade.daily_volume
+            for trade in cost_model.calls[-1]
+        }
+        for ticker in sample_tickers:
+            expected_volume = env_data.loc[(trade_date, ticker), 'volume']
+            assert volumes_by_ticker[ticker] == pytest.approx(expected_volume)
+
+    def test_trade_info_volume_is_none_when_column_missing(self, env_data, sample_tickers):
+        """Missing volume should fall back cleanly for non-volume slippage models."""
+        cost_model = self.CapturingCostModel()
+        env = PortfolioEnv(
+            data=env_data.drop(columns=['volume']),
+            feature_columns=['returns', 'close', 'sma_20'],
+            tickers=sample_tickers,
+            initial_balance=10000.0,
+            cost_model=cost_model,
+            window_size=20
+        )
+        env.reset()
+
+        env.step(np.ones(env.n_assets + 1))
+
+        assert cost_model.calls
+        assert all(trade.daily_volume is None for trade in cost_model.calls[-1])
+
+    def test_trade_info_includes_bid_ask_spread_when_available(
+        self,
+        env_data,
+        sample_tickers,
+    ):
+        """Spread-aware slippage models should receive per-ticker spread data."""
+        cost_model = self.CapturingCostModel()
+        spread_data = env_data.copy()
+        expected_spreads = {}
+        for idx, ticker in enumerate(sample_tickers):
+            spread = 0.001 * (idx + 1)
+            expected_spreads[ticker] = spread
+            spread_data.loc[pd.IndexSlice[:, ticker], 'bid_ask_spread'] = spread
+
+        env = PortfolioEnv(
+            data=spread_data,
+            feature_columns=['returns', 'close', 'sma_20'],
+            tickers=sample_tickers,
+            initial_balance=10000.0,
+            cost_model=cost_model,
+            window_size=20
+        )
+        env.reset()
+
+        env.step(np.ones(env.n_assets + 1))
+
+        assert cost_model.calls
+        spreads_by_ticker = {
+            trade.ticker: trade.bid_ask_spread
+            for trade in cost_model.calls[-1]
+        }
+        assert spreads_by_ticker == pytest.approx(expected_spreads)
+
+    def test_trade_info_uses_spread_alias_when_bid_ask_spread_missing(
+        self,
+        env_data,
+        sample_tickers,
+    ):
+        """A generic spread column should be accepted when bid_ask_spread is absent."""
+        cost_model = self.CapturingCostModel()
+        spread_data = env_data.copy()
+        spread_data['spread'] = 0.002
+
+        env = PortfolioEnv(
+            data=spread_data,
+            feature_columns=['returns', 'close', 'sma_20'],
+            tickers=sample_tickers,
+            initial_balance=10000.0,
+            cost_model=cost_model,
+            window_size=20
+        )
+        env.reset()
+
+        env.step(np.ones(env.n_assets + 1))
+
+        assert cost_model.calls
+        assert all(
+            trade.bid_ask_spread == pytest.approx(0.002)
+            for trade in cost_model.calls[-1]
+        )
 
     def test_validate_data_missing_ticker_raises_error(self, env_data, sample_tickers):
         """Test that missing ticker raises error."""

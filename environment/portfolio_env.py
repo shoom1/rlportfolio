@@ -78,7 +78,9 @@ class PortfolioEnv(gym.Env):
             # Create default model from transaction_cost parameter
             self.cost_model = CombinedCostModel(
                 transaction_model=ProportionalCostModel(transaction_cost),
-                slippage_model=FixedSlippageModel(0.0),  # No slippage by default
+                # Explicit zero-slippage default for backward compatibility.
+                # Use a custom cost_model to enable nonzero or data-aware slippage.
+                slippage_model=FixedSlippageModel(0.0),
                 name='default'
             )
 
@@ -175,6 +177,57 @@ class PortfolioEnv(gym.Env):
             .to_numpy(dtype=np.float32, copy=False)
             .reshape(len(self.dates), self.n_assets)
         )
+
+        self._volume_array = self._precompute_optional_market_array(index, 'volume')
+
+        spread_col = next(
+            (
+                col for col in ('bid_ask_spread', 'spread')
+                if col in self.data.columns
+            ),
+            None,
+        )
+        self._spread_array = (
+            self._precompute_optional_market_array(index, spread_col)
+            if spread_col is not None
+            else None
+        )
+
+    def _precompute_optional_market_array(
+        self,
+        index: pd.MultiIndex,
+        column: Optional[str],
+    ) -> Optional[np.ndarray]:
+        if column is None or column not in self.data.columns:
+            return None
+
+        values = self.data[[column]].reindex(index)
+        values = values.groupby(level='ticker').ffill()
+        return (
+            values[column]
+            .to_numpy(dtype=np.float64, copy=False)
+            .reshape(len(self.dates), self.n_assets)
+        )
+
+    def _get_optional_market_value(
+        self,
+        values: Optional[np.ndarray],
+        date_idx: int,
+        asset_idx: int,
+        *,
+        require_positive: bool = False,
+        require_nonnegative: bool = False,
+    ) -> Optional[float]:
+        if values is None:
+            return None
+        value = float(values[date_idx, asset_idx])
+        if not np.isfinite(value):
+            return None
+        if require_positive and value <= 0:
+            return None
+        if require_nonnegative and value < 0:
+            return None
+        return value
 
     def reset(
         self,
@@ -324,13 +377,10 @@ class PortfolioEnv(gym.Env):
         Returns:
             Total transaction cost incurred (including slippage)
         """
-        # Calculate target allocations
-        # After softmax, target_weights sum to (1 - target_cash_ratio) because they're part of
-        # the same softmax that includes cash. We need to renormalize them to sum to 1,
-        # then multiply by the target asset value.
-
-        # Total target value for assets (after accounting for desired cash ratio)
-        target_asset_value = (1 - target_cash_ratio) * portfolio_value
+        if portfolio_value <= 0:
+            self.holdings = np.zeros(self.n_assets, dtype=np.float64)
+            self.cash = portfolio_value
+            return 0.0
 
         # Renormalize asset weights to sum to 1 (they represent relative proportions among assets)
         # This fixes the double application of the cash ratio
@@ -341,42 +391,99 @@ class PortfolioEnv(gym.Env):
             # If all asset weights are zero, distribute equally
             normalized_asset_weights = np.ones(len(target_weights)) / len(target_weights)
 
-        # Distribute the asset value according to the normalized weights
-        target_values = normalized_asset_weights * target_asset_value
+        target_cash_ratio = float(np.clip(target_cash_ratio, 0.0, 1.0))
+        current_holdings = self.holdings.copy()
+        market_date_idx = self.window_size + self.current_step
 
-        # Calculate target number of shares
-        target_holdings = target_values / prices
+        def build_trade_infos(candidate_holdings: np.ndarray) -> List[TradeInfo]:
+            trades = candidate_holdings - current_holdings
+            trade_infos = []
+            for i, ticker in enumerate(self.tickers):
+                if abs(trades[i]) > TRADE_EPSILON:
+                    trade_infos.append(TradeInfo(
+                        ticker=ticker,
+                        shares_traded=trades[i],
+                        price=prices[i],
+                        portfolio_value=portfolio_value,
+                        daily_volume=self._get_optional_market_value(
+                            self._volume_array,
+                            market_date_idx,
+                            i,
+                            require_positive=True,
+                        ),
+                        bid_ask_spread=self._get_optional_market_value(
+                            self._spread_array,
+                            market_date_idx,
+                            i,
+                            require_nonnegative=True,
+                        ),
+                    ))
+            return trade_infos
 
-        # Calculate trades needed
-        trades = target_holdings - self.holdings
-
-        # Create TradeInfo objects for cost calculation
-        trade_infos = []
-        for i, ticker in enumerate(self.tickers):
-            if abs(trades[i]) > TRADE_EPSILON:  # Only include non-trivial trades
-                trade_infos.append(TradeInfo(
-                    ticker=ticker,
-                    shares_traded=trades[i],
-                    price=prices[i],
-                    portfolio_value=portfolio_value,
-                    daily_volume=None,  # Could be added from data if available
-                    bid_ask_spread=None  # Could be added from data if available
-                ))
-
-        # Calculate total costs using the cost model
-        if trade_infos:
+        def calculate_cost(candidate_holdings: np.ndarray) -> float:
+            trade_infos = build_trade_infos(candidate_holdings)
+            if not trade_infos:
+                return 0.0
             cost_breakdown = self.cost_model.calculate_total_cost(trade_infos)
-            total_cost = cost_breakdown['total_cost']
-        else:
-            total_cost = 0.0
+            return float(cost_breakdown['total_cost'])
 
-        # Update holdings
-        self.holdings = target_holdings
+        target_holdings = self.holdings.copy()
+        total_cost = 0.0
+        tolerance = max(1e-8, abs(portfolio_value) * 1e-10)
+
+        # Transaction costs are paid from the same starting portfolio. Size
+        # target assets against post-cost value so low-cash actions cannot
+        # borrow implicitly to pay costs.
+        for _ in range(25):
+            post_cost_value = max(portfolio_value - total_cost, 0.0)
+            target_asset_value = (1.0 - target_cash_ratio) * post_cost_value
+            target_values = normalized_asset_weights * target_asset_value
+            candidate_holdings = target_values / prices
+            candidate_cost = calculate_cost(candidate_holdings)
+
+            target_holdings = candidate_holdings
+            if abs(candidate_cost - total_cost) <= tolerance:
+                total_cost = candidate_cost
+                break
+            total_cost = candidate_cost
 
         # Calculate actual cash after rebalancing
-        # Cash = Total portfolio - Asset value - Transaction costs
+        # Cash = total portfolio - asset value - transaction costs. Clamp
+        # tiny negative roundoff to zero; material negative cash would imply
+        # margin, which this environment does not model.
         actual_asset_value = np.sum(target_holdings * prices)
-        self.cash = portfolio_value - actual_asset_value - total_cost
+        cash = portfolio_value - actual_asset_value - total_cost
+
+        if cash < -tolerance:
+            best_holdings = current_holdings
+            best_cost = 0.0
+            low, high = 0.0, 1.0
+            for _ in range(60):
+                alpha = (low + high) / 2.0
+                candidate_holdings = (
+                    current_holdings + alpha * (target_holdings - current_holdings)
+                )
+                candidate_cost = calculate_cost(candidate_holdings)
+                candidate_asset_value = np.sum(candidate_holdings * prices)
+                candidate_cash = (
+                    portfolio_value - candidate_asset_value - candidate_cost
+                )
+                if candidate_cash >= 0:
+                    best_holdings = candidate_holdings
+                    best_cost = candidate_cost
+                    low = alpha
+                else:
+                    high = alpha
+
+            target_holdings = best_holdings
+            total_cost = best_cost
+            actual_asset_value = np.sum(target_holdings * prices)
+            cash = portfolio_value - actual_asset_value - total_cost
+
+        # Update holdings and cash together after all cost calculations have
+        # been made against the original holdings.
+        self.holdings = target_holdings
+        self.cash = 0.0 if -tolerance < cash < 0 else cash
 
         return total_cost
 

@@ -271,10 +271,10 @@ def analyze_network_from_config(config_path: str):
     estimated_params = 0
     prev_size = 1300  # approximate input size
 
-    for layer_size in net_arch:
+    for i, layer_size in enumerate(net_arch, start=1):
         params = (prev_size + 1) * layer_size  # +1 for bias
         estimated_params += params
-        print(f"  Layer {len(estimated_params):d}: ~{params:,} parameters")
+        print(f"  Layer {i:d}: ~{params:,} parameters")
         prev_size = layer_size
 
     # Output layer (actor)
