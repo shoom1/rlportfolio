@@ -58,6 +58,8 @@ events.out.tfevents.*
 results/
 *.png
 *.pdf
+# Keep committed figures used in README.
+!figures/*.png
 
 # MacOS
 .DS_Store
