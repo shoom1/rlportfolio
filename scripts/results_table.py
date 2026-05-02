@@ -21,7 +21,18 @@ import pandas as pd
 
 
 # Baselines tracked in the CSV. Order is the row order in the output table.
-DEFAULT_BASELINES = ('equal_weight', 'buy_and_hold', 'momentum_20', 'min_variance_60', 'inverse_vol_30')
+# `sp500` is added by `scripts/add_market_benchmark.py` post-hoc (the
+# walk-forward harness itself doesn't run external indices).
+DEFAULT_BASELINES = (
+    'equal_weight', 'buy_and_hold', 'sp500',
+    'momentum_20', 'min_variance_60', 'inverse_vol_30',
+)
+
+
+# Display labels for known columns; falls back to the column name otherwise.
+DISPLAY_LABELS = {
+    'sp500': 'S&P 500 (^GSPC, buy & hold)',
+}
 
 
 def _agg(s: pd.Series) -> dict:
@@ -62,7 +73,8 @@ def render_table(csv_path: Path, baselines=DEFAULT_BASELINES) -> str:
         ret = _agg(ok[f'{b}_return'])
         comparable = ok[['agent_sharpe', f'{b}_sharpe']].replace([np.inf, -np.inf], np.nan).dropna()
         hit = (comparable['agent_sharpe'] > comparable[f'{b}_sharpe']).mean() if len(comparable) else float('nan')
-        rows.append((b, sh, ret, {'mean': float('nan')}, hit))
+        label = DISPLAY_LABELS.get(b, b)
+        rows.append((label, sh, ret, {'mean': float('nan')}, hit))
 
     lines = [
         f"_Walk-forward, expanding-window protocol. {n_folds} folds × {n_seeds} seeds "

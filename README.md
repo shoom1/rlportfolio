@@ -324,20 +324,33 @@ _Walk-forward, expanding-window protocol. 73 folds × 3 seeds = 219/219 successf
 | **RL agent (PPO)** | +1.273 | +1.360 | 1.963 | +5.09% | -9.26% | — |
 | buy_and_hold | +1.344 | +1.509 | 1.976 | +6.32% | — | 40% |
 | equal_weight | +1.346 | +1.346 | 1.969 | +6.27% | — | 40% |
+| S&P 500 (^GSPC, buy & hold) | +1.039 | +1.185 | 1.788 | +2.32% | — | 54% |
 
 Hit rate = fraction of (fold, seed) runs where the agent's Sharpe strictly beat the baseline's on the same disjoint test window.
 <!-- WF_TECH5_TABLE_END -->
 
-**Reading the table.** On this universe, with these features and this
-training budget, the PPO agent does **not** beat naive baselines. Mean
-Sharpe trails `buy_and_hold` and `equal_weight` by ~0.07, mean total
-return trails by ~120 bps per quarter, and the agent's Sharpe is higher
-than each baseline's only in 40% of (fold, seed) runs — i.e. baselines
-win 60% of the time. The agent appears to be approximately tracking a
-slightly noisier version of equal-weight after eating transaction
-costs. This is not a flattering result and it is not meant to be — it
-is what the protocol returned. See "Limitations & Honest Caveats" below
-for what would have to change to credibly claim an edge.
+**Reading the table.** Two comparisons matter and they tell different
+stories:
+
+- **Agent vs in-universe baselines (`buy_and_hold`, `equal_weight`).**
+  The agent does **not** beat them. Mean Sharpe trails by ~0.07, mean
+  total return trails by ~120 bps per quarter, and the agent's Sharpe
+  exceeds each baseline's in only 40% of (fold, seed) runs (baselines
+  win 60% of the time). After ten basis points of round-trip cost the
+  PPO policy looks like a slightly noisier version of equal-weight.
+  The agent is not adding stock-selection or timing alpha within this
+  universe.
+- **Agent vs broad market (`^GSPC` buy-and-hold, net of one initial
+  transaction cost).** The agent edges the S&P 500 by ~+0.23 mean
+  Sharpe and the agent wins 54% of the time. **But** the in-universe
+  baselines also clear the S&P 500 by ~+0.30 Sharpe — so essentially
+  the entire "edge vs market" comes from the universe selection
+  (megacap tech 2008-2026), not from the RL policy. Universe
+  cherry-picking explains it; the model does not.
+
+This is not a flattering result and it is not meant to be — it is what
+the protocol returned. See "Limitations & Honest Caveats" below for
+what would have to change to credibly claim an edge.
 
 **Reproduce:**
 
@@ -405,12 +418,13 @@ specific run.
   modeled separately from intraday. `transaction_costs.py` provides
   pluggable cost / slippage models; using anything richer than the default
   proportional cost is on the user.
-- **Normalization leakage** *(known, partially mitigated)*. Per-ticker
-  rolling features (SMA, RSI, returns) are causal by construction. However
-  `prepare_for_environment` does not currently fit normalization
-  statistics per fold — they are computed on the whole sample. This is a
-  mild form of label leakage into walk-forward training folds and should
-  be tightened before claims of OOS edge.
+- **Normalization is point-in-time, not "fit on the sample".** The
+  current `prepare_for_environment` only applies causal transforms:
+  `pct_change(lookback_window)` (purely backward-looking),
+  `rsi / 100.0` (constant), `atr / close` (point-in-time). There is no
+  global mean/std fit — so changing to a per-fold scaler would be a
+  no-op on the current feature set. If you add z-score / min-max
+  features later, the harness would need a per-fold `.fit()` then.
 - **Action-space inductive bias.** Continuous weights via softmax with an
   explicit cash dimension means the agent can never short, never lever
   beyond 1.0×, and always maintains a valid simplex. That is a strong
