@@ -37,6 +37,8 @@ ENV/
 # Jupyter
 .ipynb_checkpoints/
 *.ipynb
+# Keep the analysis notebook that ships with the repo.
+!notebooks/walk_forward_analysis.ipynb
 
 # Models
 training/models/*.zip
@@ -54,10 +56,16 @@ logs/
 # Tensorboard
 events.out.tfevents.*
 
-# Results
-results/
+# Results — ignore the directory contents, but allow the canonical CSV
+# that the notebook + README depend on. (Use `results/*` rather than
+# `results/`; otherwise the directory rule blocks all re-includes.)
+results/*
 *.png
 *.pdf
+# Keep committed figures used in README.
+!figures/*.png
+# Keep the canonical walk-forward CSV that the notebook + README use.
+!results/walk_forward_tech5.csv
 
 # MacOS
 .DS_Store

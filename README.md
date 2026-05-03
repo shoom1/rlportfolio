@@ -49,6 +49,41 @@ pip install -r requirements.txt
 
 **Why conda?** Better dependency resolution for scientific computing packages (numpy, scipy, matplotlib) and easier management of platform-specific binaries.
 
+### Market data — populating the local database
+
+Market data flows through [`finbase`](https://github.com/shoom1/finbase)
+([PyPI](https://pypi.org/project/finbase/)), a sibling project that
+manages a SQLite store at `~/.finbase/timeseries.db`. The Python package
+is installed from PyPI by `pip install -r requirements.txt` (or the
+conda env), but it ships only the read API — not the data, and not the
+download / setup script (`scripts/setup_database.py` lives in finbase's
+repo, not in the wheel). To populate the database from scratch:
+
+```bash
+# One-time: clone finbase and run its setup script
+git clone https://github.com/shoom1/finbase.git
+cd finbase
+python scripts/setup_database.py --init                      # creates ~/.finbase/timeseries.db
+python scripts/setup_database.py --update-all-indices        # SP500, DOW30, NASDAQ-100, FTSE100, DAX
+python scripts/setup_database.py --load-index-data SP500 \
+    --index-start-date 2005-01-01                            # OHLCV history via YFinance
+```
+
+After that, this repo's `data.fetcher.DataFetcher` (a thin wrapper over
+`finbase.DataClient`) will read from the populated store automatically.
+See the [finbase quick-start](https://github.com/shoom1/finbase#-quick-start)
+for more options.
+
+**You can skip data setup entirely if you only want to explore the
+analysis.** This repo ships the canonical walk-forward output at
+`results/walk_forward_tech5.csv` and an executed notebook at
+`notebooks/walk_forward_analysis.ipynb`; both work with no finbase
+access, no SB3, and no training.
+
+> **Python version note.** finbase requires Python ≥ 3.12. rlportfolio
+> core supports 3.8+, but regenerating the walk-forward CSV requires the
+> 3.12 finbase install.
+
 ### Development install
 
 To work on the code and run the test suite, install the project in editable mode:
@@ -177,9 +212,12 @@ rlportfolio/
 
 ### Data Pipeline
 
-1. **DataFetcher**: Thin adapter over `finbase.DataClient`, which reads from a
-   shared SQLite database at `~/.finbase/timeseries.db`. Data is populated and
-   refreshed by the `finbase` project — this repo only reads it.
+1. **DataFetcher**: Thin adapter over `finbase.DataClient` — see
+   [github.com/shoom1/finbase](https://github.com/shoom1/finbase) (also on
+   [PyPI](https://pypi.org/project/finbase/)). It reads from a shared
+   SQLite database at `~/.finbase/timeseries.db`. Data is populated and
+   refreshed by the `finbase` project — this repo only reads it; see
+   the Installation section for one-time DB-population steps.
 2. **FeatureEngineer**: Computes technical indicators using a registry pattern for extensibility
 3. Features are normalized and prepared for the RL environment
 
@@ -300,26 +338,221 @@ backtester.baseline_registry.register(MyStrategy())
 
 ## Data Sources
 
-Market data is sourced through **`finbase.DataClient`**, a shared SQLite-backed
-client used across the FinAI projects. The local database lives at
-`~/.finbase/timeseries.db`. Populating and refreshing that database is the
-responsibility of the `finbase` package; this repo is a read-only consumer.
+Market data is sourced through **`finbase.DataClient`** — a sibling
+project at [github.com/shoom1/finbase](https://github.com/shoom1/finbase)
+(also on [PyPI](https://pypi.org/project/finbase/) as `finbase`). It
+maintains a SQLite store at `~/.finbase/timeseries.db`, populated from
+YFinance with full point-in-time index-constituent tracking for SP500,
+DOW30, NASDAQ-100, FTSE 100, and DAX. This repo is a read-only consumer
+of that database; see the [Installation section](#market-data--populating-the-local-database)
+for the one-time DB-population steps.
 
 See `data/fetcher.py` for the thin adapter layer.
 
 ## Results
 
-Results are sensitive to universe, time period, and random seed. Single-window comparisons can overstate the RL edge — an honest assessment needs walk-forward across regimes. Current configs use `static_current` universes, so index-style claims should be treated as survivorship-biased unless you provide a true point-in-time membership source outside this package.
+The numbers below come from a single command, with seeds and configs fixed
+in this repo. They are **honest, not flattering** — the point of the table
+is reproducibility, not marketing. See "Limitations & Honest Caveats" below
+for what these numbers do and do not mean.
 
-Run the walk-forward harness on your universe of choice to generate per-fold metrics:
+### Walk-forward, tech5 universe (AAPL, MSFT, GOOGL, AMZN, NVDA)
+
+<!-- WF_TECH5_TABLE_START -->
+_Walk-forward, expanding-window protocol. 73 folds × 3 seeds = 219/219 successful runs (0 failed). Quarterly stride, 3-year minimum train, 6-month in-sample selection slice. Test windows 2008-01-04 → 2026-04-16._
+
+| Strategy | Mean Sharpe | Median Sharpe | Sharpe σ | Mean total return | Mean max DD | Hit rate vs agent |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| **RL agent (PPO)** | +1.273 | +1.360 | 1.963 | +5.09% | -9.26% | — |
+| buy_and_hold | +1.344 | +1.509 | 1.976 | +6.32% | — | 40% |
+| equal_weight | +1.346 | +1.346 | 1.969 | +6.27% | — | 40% |
+| S&P 500 (^GSPC, buy & hold) | +1.039 | +1.185 | 1.788 | +2.32% | — | 54% |
+
+Hit rate = fraction of (fold, seed) runs where the agent's Sharpe strictly beat the baseline's on the same disjoint test window.
+<!-- WF_TECH5_TABLE_END -->
+
+### Visual analysis
+
+The figures below are committed to the repo so they render directly on
+GitHub. For an **interactive version** that runs against the same
+committed CSV (no finbase / SB3 / training required), open
+[`notebooks/walk_forward_analysis.ipynb`](notebooks/walk_forward_analysis.ipynb)
+— it ships with executed outputs and adds extra cells (seed dispersion,
+sortable per-fold table) that don't fit cleanly into static PNGs.
+
+The PNGs are generated by `scripts/plot_walk_forward.py` from the same
+CSV; the notebook is generated by `scripts/build_notebook.py` and
+re-executed with `jupyter nbconvert --execute --inplace`.
+
+**Concatenated quarterly returns** — what each strategy compounds to if you
+chain the per-fold quarterly returns end-to-end. The PPO agent (blue)
+visibly underperforms the in-universe baselines (green/orange) from
+~2017 onwards, while clearly beating the S&P 500 (grey). The agent is
+losing to a rebalanced basket of the *same* tickers, not to the market.
+
+![tech5 cumulative return](figures/tech5_equity_curves.png)
+
+**Per-window Sharpe distribution** — boxplot + jittered points across all
+219 (fold, seed) runs. The four distributions overlap heavily; the
+agent's median Sharpe is about 0.15 below the in-universe baselines and
+~0.15 above the S&P 500. No strategy meaningfully escapes the others
+when the per-window noise is shown directly.
+
+![tech5 per-window Sharpe distribution](figures/tech5_sharpe_distribution.png)
+
+**Rolling 4-fold mean Sharpe** — the agent (blue) and in-universe
+baselines (green/orange) move almost identically through every regime,
+which is consistent with the agent learning a near-equal-weight policy.
+The S&P 500 (grey) tracks differently and is generally lower over this
+sample.
+
+![tech5 rolling Sharpe](figures/tech5_rolling_sharpe.png)
+
+**Rolling 8-fold hit rate** — the most diagnostic plot. Vs the S&P 500
+the agent stays mostly above the 50% parity line (agent picked a better
+universe). Vs the in-universe baselines the agent spends 2014-2022
+*below* parity — losing more often than winning — and only catches up
+in 2018-2019 and 2024. The 50% line is what matters; persistent
+deviations either way require a statistical test before being called
+"edge".
+
+![tech5 rolling hit rate](figures/tech5_hit_rate.png)
+
+**Reading the table.** Two comparisons matter and they tell different
+stories:
+
+- **Agent vs in-universe baselines (`buy_and_hold`, `equal_weight`).**
+  The agent does **not** beat them. Mean Sharpe trails by ~0.07, mean
+  total return trails by ~120 bps per quarter, and the agent's Sharpe
+  exceeds each baseline's in only 40% of (fold, seed) runs (baselines
+  win 60% of the time). After ten basis points of round-trip cost the
+  PPO policy looks like a slightly noisier version of equal-weight.
+  The agent is not adding stock-selection or timing alpha within this
+  universe.
+- **Agent vs broad market (`^GSPC` buy-and-hold, net of one initial
+  transaction cost).** The agent edges the S&P 500 by ~+0.23 mean
+  Sharpe and the agent wins 54% of the time. **But** the in-universe
+  baselines also clear the S&P 500 by ~+0.30 Sharpe — so essentially
+  the entire "edge vs market" comes from the universe selection
+  (megacap tech 2008-2026), not from the RL policy. Universe
+  cherry-picking explains it; the model does not.
+
+This is not a flattering result and it is not meant to be — it is what
+the protocol returned. See "Limitations & Honest Caveats" below for
+what would have to change to credibly claim an edge.
+
+**Reproduce:**
 
 ```bash
 conda run -n rlportfolio python -m evaluation.walk_forward \
-    --config configs/opt_c_div19.yaml \
-    --seeds 42 43 44
+    --config configs/opt_c_tech5.yaml \
+    --t-min-days 756 --stride-days 63 \
+    --seeds 42 43 44 \
+    --output results/walk_forward_tech5.csv
+
+conda run -n rlportfolio python scripts/results_table.py \
+    results/walk_forward_tech5.csv \
+    --update-readme README.md --marker WF_TECH5_TABLE
 ```
 
-Outputs a per-fold/per-seed CSV and prints aggregate run-level and fold-mean Sharpe / hit-rate summaries. Each row includes `universe_mode`, `survivorship_bias`, `n_assets`, and `tickers_hash` so downstream analysis keeps the universe assumption attached to the result. Quarterly protocol with 3-year minimum train, 1-quarter stride and disjoint test windows, 6-month in-sample selection slice. See `evaluation/walk_forward.py` for all knobs.
+Each (fold, seed) trains a fresh PPO agent on the expanding window of all
+data prior to the test slice, with the last 6 months of that train window
+held out for in-sample model selection (`EvalCallback` picks the best
+checkpoint). The selected model is then backtested on the disjoint
+quarterly test window. The default `WalkForwardConfig.baselines` runs
+`buy_and_hold` and `equal_weight` on the same test window for direct
+comparison; richer baselines (`momentum`, `min_variance`,
+`inverse_vol`) are available via `--baselines`. Per-fold metrics land
+in `results/walk_forward_tech5.csv`; the table above is generated by
+`scripts/results_table.py`.
+
+### Methodology notes
+
+Quarterly protocol with 3-year minimum train, 1-quarter stride and disjoint
+test windows, 6-month in-sample selection slice. See
+`evaluation/walk_forward.py` for all knobs. Each CSV row records
+`universe_mode`, `survivorship_bias`, `n_assets`, and `tickers_hash` so
+downstream analysis keeps the universe assumption attached to the result.
+
+## Limitations & Honest Caveats
+
+RL on financial data is famously hard. The harness here addresses some of the
+classical pitfalls, but not all — and the framework cannot rescue you from the
+ones it does not. Read this section before drawing conclusions from any
+specific run.
+
+**What this code does NOT solve:**
+
+- **Survivorship bias.** `data.universe.mode: static_current` reuses today's
+  ticker list across every historical fold. Any "AAPL was already in the
+  universe in 2015" backtest implicitly excludes the names that were in the
+  index in 2015 but later got delisted, acquired, or removed (Lehman, Sears,
+  GE-pre-spinoffs, …). Index-style claims should be treated as survivorship-
+  biased unless you pipe in a real point-in-time membership source.
+  `point_in_time_index` mode is reserved but not implemented.
+- **Non-stationarity.** Equity dynamics are regime-dependent. An agent trained
+  on 2015-2021 (low-rate, post-GFC bull) is not the same problem as 2022-2024
+  (rate hikes, war, AI mania). Walk-forward exposes this by re-training each
+  fold, but if your tickers, features, or hyperparameters were chosen by
+  staring at the full sample first, you have already leaked future information
+  into your model selection.
+- **Hyperparameter overfitting.** Reported numbers come from the configs
+  checked into `configs/`. They have not been searched against the
+  walk-forward test set — but if you tune anything against walk-forward
+  output and re-report, that is also leakage.
+- **Backtest ≠ live trading.** Order fills assume your trade gets the
+  closing price with proportional slippage. There is no execution latency,
+  no liquidity constraint, no borrow cost on shorts (and the env is
+  long-only anyway), no minimum-tick rounding, and no overnight gap risk
+  modeled separately from intraday. `transaction_costs.py` provides
+  pluggable cost / slippage models; using anything richer than the default
+  proportional cost is on the user.
+- **Normalization is point-in-time, not "fit on the sample".** The
+  current `prepare_for_environment` only applies causal transforms:
+  `pct_change(lookback_window)` (purely backward-looking),
+  `rsi / 100.0` (constant), `atr / close` (point-in-time). There is no
+  global mean/std fit — so changing to a per-fold scaler would be a
+  no-op on the current feature set. If you add z-score / min-max
+  features later, the harness would need a per-fold `.fit()` then.
+- **Action-space inductive bias.** Continuous weights via softmax with an
+  explicit cash dimension means the agent can never short, never lever
+  beyond 1.0×, and always maintains a valid simplex. That is a strong
+  prior — useful for learning stability, but it rules out long/short and
+  market-neutral strategies a priori.
+- **Reward-function dependence.** Sharpe / Sortino / drawdown-penalised
+  rewards each shape behaviour differently and the right choice is not
+  obvious. None of them solve the deeper problem that *test-set Sharpe*
+  is what you actually care about and you cannot use it as a training
+  signal.
+- **Data source.** Market data flows through `finbase.DataClient`, which
+  reads adjusted close from a shared SQLite store. Adjustments (splits,
+  dividends) are applied historically; if `finbase` corrects an old bar
+  retroactively, your saved walk-forward CSVs will not match a fresh
+  re-run. There is no guarantee of point-in-time-as-of integrity.
+
+**What this code does aim to address:**
+
+- **Look-ahead in indicators.** All rolling features are left-aligned;
+  `prepare_for_environment` applies per-ticker `ffill` (no cross-ticker
+  pollution); the env zero-fills any remaining warm-up NaN.
+- **Train/val leakage.** `PortfolioTrainer.prepare_data` fetches one
+  combined window and slices by date so val is strictly after train.
+- **Single-window cherry-picking.** The `walk_forward.py` harness retrains
+  per fold on disjoint test windows. The README results table reports
+  fold-mean Sharpe, hit rate vs baselines, and Sharpe σ — not a single
+  number from a single run.
+- **Reproducibility.** Every CSV row records `universe_mode`,
+  `survivorship_bias`, `n_assets`, `tickers_hash`, seed, and fold
+  geometry. The exact command that produced README numbers is in the
+  Results section above.
+
+**What "the agent beats the baselines" actually means here.** Hit rate is the
+fraction of (fold, seed) runs where the agent's Sharpe strictly exceeds the
+baseline's on the same disjoint test window. A hit rate near 50% on a noisy
+metric like Sharpe is consistent with no real edge — the agent could be a
+coin flip vs equal-weight. Treat hit rates above ~60% with cautious interest
+and below ~55% as not statistically distinguishable from chance without
+formal testing (bootstrap CI / paired tests, not implemented here).
 
 ## Requirements
 
@@ -336,4 +569,4 @@ MIT License
 
 - Built with [Stable-Baselines3](https://github.com/DLR-RM/stable-baselines3)
 - Technical indicators from [pandas-ta](https://github.com/twopirllc/pandas-ta)
-- Market data via the internal `finbase` SQLite client
+- Market data via [`finbase`](https://github.com/shoom1/finbase) — sibling SQLite-backed data client (also on [PyPI](https://pypi.org/project/finbase/))
