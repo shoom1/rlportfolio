@@ -49,6 +49,41 @@ pip install -r requirements.txt
 
 **Why conda?** Better dependency resolution for scientific computing packages (numpy, scipy, matplotlib) and easier management of platform-specific binaries.
 
+### Market data — populating the local database
+
+Market data flows through [`finbase`](https://github.com/shoom1/finbase)
+([PyPI](https://pypi.org/project/finbase/)), a sibling project that
+manages a SQLite store at `~/.finbase/timeseries.db`. The Python package
+is installed from PyPI by `pip install -r requirements.txt` (or the
+conda env), but it ships only the read API — not the data, and not the
+download / setup script (`scripts/setup_database.py` lives in finbase's
+repo, not in the wheel). To populate the database from scratch:
+
+```bash
+# One-time: clone finbase and run its setup script
+git clone https://github.com/shoom1/finbase.git
+cd finbase
+python scripts/setup_database.py --init                      # creates ~/.finbase/timeseries.db
+python scripts/setup_database.py --update-all-indices        # SP500, DOW30, NASDAQ-100, FTSE100, DAX
+python scripts/setup_database.py --load-index-data SP500 \
+    --index-start-date 2005-01-01                            # OHLCV history via YFinance
+```
+
+After that, this repo's `data.fetcher.DataFetcher` (a thin wrapper over
+`finbase.DataClient`) will read from the populated store automatically.
+See the [finbase quick-start](https://github.com/shoom1/finbase#-quick-start)
+for more options.
+
+**You can skip data setup entirely if you only want to explore the
+analysis.** This repo ships the canonical walk-forward output at
+`results/walk_forward_tech5.csv` and an executed notebook at
+`notebooks/walk_forward_analysis.ipynb`; both work with no finbase
+access, no SB3, and no training.
+
+> **Python version note.** finbase requires Python ≥ 3.12. rlportfolio
+> core supports 3.8+, but regenerating the walk-forward CSV requires the
+> 3.12 finbase install.
+
 ### Development install
 
 To work on the code and run the test suite, install the project in editable mode:
@@ -177,9 +212,12 @@ rlportfolio/
 
 ### Data Pipeline
 
-1. **DataFetcher**: Thin adapter over `finbase.DataClient`, which reads from a
-   shared SQLite database at `~/.finbase/timeseries.db`. Data is populated and
-   refreshed by the `finbase` project — this repo only reads it.
+1. **DataFetcher**: Thin adapter over `finbase.DataClient` — see
+   [github.com/shoom1/finbase](https://github.com/shoom1/finbase) (also on
+   [PyPI](https://pypi.org/project/finbase/)). It reads from a shared
+   SQLite database at `~/.finbase/timeseries.db`. Data is populated and
+   refreshed by the `finbase` project — this repo only reads it; see
+   the Installation section for one-time DB-population steps.
 2. **FeatureEngineer**: Computes technical indicators using a registry pattern for extensibility
 3. Features are normalized and prepared for the RL environment
 
@@ -300,10 +338,14 @@ backtester.baseline_registry.register(MyStrategy())
 
 ## Data Sources
 
-Market data is sourced through **`finbase.DataClient`**, a shared SQLite-backed
-client used across the FinAI projects. The local database lives at
-`~/.finbase/timeseries.db`. Populating and refreshing that database is the
-responsibility of the `finbase` package; this repo is a read-only consumer.
+Market data is sourced through **`finbase.DataClient`** — a sibling
+project at [github.com/shoom1/finbase](https://github.com/shoom1/finbase)
+(also on [PyPI](https://pypi.org/project/finbase/) as `finbase`). It
+maintains a SQLite store at `~/.finbase/timeseries.db`, populated from
+YFinance with full point-in-time index-constituent tracking for SP500,
+DOW30, NASDAQ-100, FTSE 100, and DAX. This repo is a read-only consumer
+of that database; see the [Installation section](#market-data--populating-the-local-database)
+for the one-time DB-population steps.
 
 See `data/fetcher.py` for the thin adapter layer.
 
@@ -527,4 +569,4 @@ MIT License
 
 - Built with [Stable-Baselines3](https://github.com/DLR-RM/stable-baselines3)
 - Technical indicators from [pandas-ta](https://github.com/twopirllc/pandas-ta)
-- Market data via the internal `finbase` SQLite client
+- Market data via [`finbase`](https://github.com/shoom1/finbase) — sibling SQLite-backed data client (also on [PyPI](https://pypi.org/project/finbase/))
